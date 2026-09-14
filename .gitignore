@@ -1,0 +1,17 @@
+# Tooling state
+.idea/
+.remember/
+supertool
+
+# Java / Maven / Gradle
+target/
+build/
+.gradle/
+*.class
+*.jar
+*.war
+
+# OS / editor
+.DS_Store
+*.iml
+.vscode/
