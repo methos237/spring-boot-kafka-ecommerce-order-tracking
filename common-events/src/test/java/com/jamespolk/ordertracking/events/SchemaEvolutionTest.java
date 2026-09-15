@@ -20,10 +20,17 @@ import org.apache.avro.io.DecoderFactory;
 import org.apache.avro.io.EncoderFactory;
 import org.apache.avro.specific.SpecificData;
 import org.apache.avro.specific.SpecificDatumReader;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /** A producer on schema v2 (new optional field) must still be readable by a consumer compiled against v1. */
 class SchemaEvolutionTest {
+
+    /** Reading into a generated class needs the trust list; production JVMs get it from the serializer and interceptor. */
+    @BeforeAll
+    static void trustEvents() {
+        Events.trustEventClasses();
+    }
 
     @Test
     void v1ConsumerReadsV2Record() throws IOException {
