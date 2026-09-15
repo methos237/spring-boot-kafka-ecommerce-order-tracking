@@ -5,3 +5,12 @@ logging:
     org.testcontainers: WARN
     com.github.dockerjava: WARN
     org.hibernate: WARN
+
+spring:
+  kafka:
+    producer:
+      properties:
+        # fail fast while the broker is paused so the relay rolls back and retries next tick
+        max.block.ms: 3000
+        delivery.timeout.ms: 5000
+        request.timeout.ms: 3000
