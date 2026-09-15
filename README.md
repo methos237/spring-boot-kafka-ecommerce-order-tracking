@@ -115,6 +115,22 @@ Restart `payment-service` and the outcome topics do not grow.
 
 Tests for both services run against Testcontainers Kafka and Postgres: publish `OrderPlaced` records, wait for the row, drain the outcome topic for a fixed window and assert exactly one event per order, including when the same `OrderPlaced` is published twice.
 
+## notification-service
+
+One consumer group (`notification-group`) subscribed to all three topics. Every event becomes one log line:
+
+```
+[order=5175eff1-...] OrderPlaced customer=carol items=1 total=9.99
+[order=5175eff1-...] PaymentSucceeded amount=9.99
+[order=5175eff1-...] InventoryFailed reason=insufficient stock for SKU-3: requested 1, available 0
+[order=5175eff1-...] OrderCancelled reason=inventory: insufficient stock for SKU-3: requested 1, available 0
+[order=5175eff1-...] PaymentRefunded amount=9.99
+```
+
+Stateless by design: no database, no idempotency table. Logging a replayed event twice is harmless, and keeping the service free of state means it can be restarted, rewound, or scaled without coordination. A real system would hand each line to an email, SMS or push channel here, and that channel's delivery guarantees would decide whether a `processed_events` table becomes necessary.
+
+Test: publishes one event per topic to Testcontainers Kafka and asserts the four timeline lines with `OutputCaptureExtension`.
+
 ## Saga: from PENDING to CONFIRMED or CANCELLED
 
 `order-service` consumes `payment-events` and `inventory-events` in group `order-group` and applies each outcome to the order. Arrival order does not matter.
@@ -153,4 +169,4 @@ Tests: the saga test places a real order, publishes outcome events straight to t
 
 ## Status
 
-Work in progress. Done: infrastructure, `common-events`, `order-service`, `payment-service`, `inventory-service`, saga completion and refunds. Next: `notification-service`.
+Work in progress. All five modules are in place and the saga runs end to end. Next: retries and dead letter topics.
