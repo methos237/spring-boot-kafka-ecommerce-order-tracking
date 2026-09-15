@@ -49,12 +49,42 @@ docker compose up -d        # Kafka on 9092, Kafka UI on http://localhost:8090, 
 mvn -B verify               # build and run all tests (Testcontainers starts its own Kafka and Postgres)
 ```
 
+Start a service from its packaged jar (build first with `mvn -B verify`, or `mvn -B package -DskipTests`):
+
+```bash
+java -jar order-service/target/order-service-0.1.0-SNAPSHOT.jar
+```
+
 Peek at a topic:
 
 ```bash
 scripts/peek.sh order-events 5
 ```
 
+## order-service
+
+REST entry point. Persists the order as `PENDING` in Postgres (Flyway-managed schema) and publishes `OrderPlaced` to `order-events`, keyed by the order id. The producer runs with `acks=all` and idempotence enabled.
+
+```bash
+curl -i -X POST localhost:8080/api/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"customerId":"customer-1","items":[{"sku":"SKU-1","quantity":2,"unitPrice":19.99}]}'
+```
+
+```http
+HTTP/1.1 201
+Location: /api/orders/5455e5c3-5f3a-4d58-8c03-fc59098ad6d4
+
+{"id":"5455e5c3-...","customerId":"customer-1","items":[{"sku":"SKU-1","quantity":2,"unitPrice":19.99}],
+ "totalAmount":39.98,"status":"PENDING","createdAt":"2026-09-15T02:51:36Z","updatedAt":"2026-09-15T02:51:36Z"}
+```
+
+`GET /api/orders/{id}` returns the same shape. Errors are RFC 9457 problem details: validation failures return 400 with an `errors` array listing each offending field, unknown ids return 404.
+
+The total is computed server-side from the line items. Money is `BigDecimal` end to end, `numeric(12,2)` in Postgres.
+
+Tests: a `@WebMvcTest` slice covers request validation and error mapping without a database or broker. A `@SpringBootTest` integration test starts real Postgres and Kafka with Testcontainers, places an order over HTTP, reads it back, and consumes the resulting `OrderPlaced` record to assert its key and payload.
+
 ## Status
 
-Work in progress. Modules land one at a time; see the issues for the plan.
+Work in progress. Done: infrastructure, `common-events`, `order-service`. Next: `payment-service` and `inventory-service` consumers.
