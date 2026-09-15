@@ -85,6 +85,36 @@ The total is computed server-side from the line items. Money is `BigDecimal` end
 
 Tests: a `@WebMvcTest` slice covers request validation and error mapping without a database or broker. A `@SpringBootTest` integration test starts real Postgres and Kafka with Testcontainers, places an order over HTTP, reads it back, and consumes the resulting `OrderPlaced` record to assert its key and payload.
 
+## payment-service and inventory-service
+
+Both consume `order-events` in their own consumer group (`payment-group`, `inventory-group`), so each sees every order independently. A class-level `@KafkaListener` routes records to a `@KafkaHandler` by payload type; event types the service does not care about fall through to a no-op default handler.
+
+Business rules are deterministic so every failure path can be reproduced from the request:
+
+| Service | Rule | Outcome event |
+|---|---|---|
+| payment | `totalAmount <= 1000.00` | `PaymentSucceeded` |
+| payment | `totalAmount > 1000.00` | `PaymentFailed` |
+| inventory | every sku known and `quantity <= available` | `InventoryReserved`, stock decremented |
+| inventory | any sku unknown or short | `InventoryFailed`, no stock touched |
+
+Seeded stock: `SKU-1` 100, `SKU-2` 10, `SKU-3` 0.
+
+Inventory locks every requested sku row (`PESSIMISTIC_WRITE`) and checks all of them before decrementing any, so a multi-line order that fails on one line never leaves a partial reservation, and two orders for the same sku on different partitions cannot both pass the check.
+
+### Idempotent consumers
+
+Kafka delivers at least once. Rebalances, retries, and offset resets all replay records. Each consumer keeps a `processed_events` table keyed by `eventId`; the handler checks it, inserts the id, does its work, and publishes the outcome in one database transaction. A replayed record is logged and dropped. You can watch this by resetting a group's offsets:
+
+```bash
+docker exec kafka kafka-consumer-groups --bootstrap-server localhost:9092 \
+  --group payment-group --topic order-events --reset-offsets --to-earliest --execute
+```
+
+Restart `payment-service` and the outcome topics do not grow.
+
+Tests for both services run against Testcontainers Kafka and Postgres: publish `OrderPlaced` records, wait for the row, drain the outcome topic for a fixed window and assert exactly one event per order, including when the same `OrderPlaced` is published twice.
+
 ## Status
 
-Work in progress. Done: infrastructure, `common-events`, `order-service`. Next: `payment-service` and `inventory-service` consumers.
+Work in progress. Done: infrastructure, `common-events`, `order-service`, `payment-service`, `inventory-service`. Next: saga completion in `order-service` and payment refunds on cancellation.
