@@ -28,9 +28,14 @@ spring:
       acks: all
       properties:
         enable.idempotence: true
+        interceptor.classes: com.jamespolk.ordertracking.events.kafka.OrderIdHeaderInterceptor
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
+
+logging:
+  pattern:
+    correlation: "[order=%X{orderId:-}] "

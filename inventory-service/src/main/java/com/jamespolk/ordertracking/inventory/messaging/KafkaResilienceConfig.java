@@ -1,12 +1,14 @@
 package com.jamespolk.ordertracking.inventory.messaging;
 
 import com.jamespolk.ordertracking.events.Topics;
+import com.jamespolk.ordertracking.events.kafka.OrderIdMdcInterceptor;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.listener.RecordInterceptor;
 import org.springframework.util.backoff.FixedBackOff;
 
 /**
@@ -26,5 +28,11 @@ class KafkaResilienceConfig {
         var handler = new DefaultErrorHandler(recoverer, new FixedBackOff(RETRY_INTERVAL_MS, MAX_RETRIES));
         handler.addNotRetryableExceptions(IllegalArgumentException.class);
         return handler;
+    }
+
+    /** Picked up by Boot's listener container factory; puts the order id in the MDC per record. */
+    @Bean
+    RecordInterceptor<Object, Object> orderIdMdcInterceptor() {
+        return new OrderIdMdcInterceptor();
     }
 }

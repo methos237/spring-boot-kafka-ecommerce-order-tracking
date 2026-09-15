@@ -67,10 +67,6 @@ class OrderTimelineListener {
     }
 
     private static void line(DomainEvent event, String detail) {
-        log.info(
-                "[order={}] {}{}",
-                event.orderId(),
-                event.getClass().getSimpleName(),
-                detail.isEmpty() ? "" : " " + detail);
+        log.info("{}{}", event.getClass().getSimpleName(), detail.isEmpty() ? "" : " " + detail);
     }
 }

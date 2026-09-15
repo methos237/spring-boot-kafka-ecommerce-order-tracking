@@ -52,13 +52,13 @@ class OrderTimelineListenerTest {
         publish(Topics.INVENTORY_EVENTS, new InventoryReserved(UUID.randomUUID(), orderId, Instant.now()));
         publish(Topics.ORDER_EVENTS, new OrderConfirmed(UUID.randomUUID(), orderId, Instant.now()));
 
-        String prefix = "[order=" + orderId + "] ";
+        String prefix = "\\[order=" + orderId + "\\] .*";
         await().atMost(Duration.ofSeconds(20))
                 .untilAsserted(() -> assertThat(output.getOut())
-                        .contains(prefix + "OrderPlaced customer=customer-1 items=1 total=39.98")
-                        .contains(prefix + "PaymentSucceeded amount=39.98")
-                        .contains(prefix + "InventoryReserved")
-                        .contains(prefix + "OrderConfirmed"));
+                        .containsPattern(prefix + "OrderPlaced customer=customer-1 items=1 total=39.98")
+                        .containsPattern(prefix + "PaymentSucceeded amount=39.98")
+                        .containsPattern(prefix + "InventoryReserved")
+                        .containsPattern(prefix + "OrderConfirmed"));
     }
 
     private void publish(String topic, DomainEvent event) {
