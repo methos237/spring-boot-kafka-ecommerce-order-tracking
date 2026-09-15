@@ -9,12 +9,8 @@ import com.jamespolk.ordertracking.order.domain.OrderStatus;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
@@ -22,7 +18,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.client.RestTestClient;
 import org.testcontainers.kafka.KafkaContainer;
@@ -74,9 +69,12 @@ class OrderApiIntegrationTest {
                 .jsonPath("$.status")
                 .isEqualTo("PENDING");
 
-        ConsumerRecord<String, String> record = consumeOne(Topics.ORDER_EVENTS);
-        assertThat(record.key()).isEqualTo(created.id().toString());
-        OrderPlaced event = jsonMapper.readValue(record.value(), OrderPlaced.class);
+        List<ConsumerRecord<String, String>> records =
+                KafkaTestSupport.drain(kafka.getBootstrapServers(), Topics.ORDER_EVENTS, Duration.ofSeconds(5)).stream()
+                        .filter(r -> r.key().equals(created.id().toString()))
+                        .toList();
+        assertThat(records).hasSize(1);
+        OrderPlaced event = jsonMapper.readValue(records.getFirst().value(), OrderPlaced.class);
         assertThat(event.orderId()).isEqualTo(created.id());
         assertThat(event.customerId()).isEqualTo("customer-1");
         assertThat(event.totalAmount()).isEqualByComparingTo(new BigDecimal("39.98"));
@@ -113,23 +111,5 @@ class OrderApiIntegrationTest {
                 .expectBody()
                 .jsonPath("$.title")
                 .isEqualTo("Order not found");
-    }
-
-    private ConsumerRecord<String, String> consumeOne(String topic) {
-        Map<String, Object> props = Map.of(
-                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                kafka.getBootstrapServers(),
-                ConsumerConfig.GROUP_ID_CONFIG,
-                "test-" + UUID.randomUUID(),
-                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
-                "earliest",
-                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
-                StringDeserializer.class,
-                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
-                StringDeserializer.class);
-        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            consumer.subscribe(List.of(topic));
-            return KafkaTestUtils.getSingleRecord(consumer, topic, Duration.ofSeconds(15));
-        }
     }
 }

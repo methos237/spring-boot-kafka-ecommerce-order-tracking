@@ -1,7 +1,9 @@
 package com.jamespolk.ordertracking.payment.domain;
 
+import com.jamespolk.ordertracking.events.OrderCancelled;
 import com.jamespolk.ordertracking.events.OrderPlaced;
 import com.jamespolk.ordertracking.events.PaymentFailed;
+import com.jamespolk.ordertracking.events.PaymentRefunded;
 import com.jamespolk.ordertracking.events.PaymentSucceeded;
 import com.jamespolk.ordertracking.payment.messaging.PaymentEventPublisher;
 import java.time.Instant;
@@ -45,5 +47,24 @@ public class PaymentService {
             publisher.publish(
                     new PaymentFailed(UUID.randomUUID(), event.orderId(), Instant.now(), payment.getReason()));
         }
+    }
+
+    @Transactional
+    public void handle(OrderCancelled event) {
+        if (processedEvents.existsById(event.eventId())) {
+            log.info("[order={}] duplicate OrderCancelled {} ignored", event.orderId(), event.eventId());
+            return;
+        }
+        processedEvents.save(new ProcessedEvent(event.eventId()));
+
+        payments.findByOrderId(event.orderId())
+                .filter(Payment::refund)
+                .ifPresentOrElse(
+                        payment -> {
+                            log.info("[order={}] refunded {}", event.orderId(), payment.getAmount());
+                            publisher.publish(new PaymentRefunded(
+                                    UUID.randomUUID(), event.orderId(), Instant.now(), payment.getAmount()));
+                        },
+                        () -> log.info("[order={}] cancelled, nothing to refund", event.orderId()));
     }
 }

@@ -115,6 +115,42 @@ Restart `payment-service` and the outcome topics do not grow.
 
 Tests for both services run against Testcontainers Kafka and Postgres: publish `OrderPlaced` records, wait for the row, drain the outcome topic for a fixed window and assert exactly one event per order, including when the same `OrderPlaced` is published twice.
 
+## Saga: from PENDING to CONFIRMED or CANCELLED
+
+`order-service` consumes `payment-events` and `inventory-events` in group `order-group` and applies each outcome to the order. Arrival order does not matter.
+
+```
+                 PaymentSucceeded            InventoryReserved
+   PENDING ─────────────────────► payment ok ──────────────────► CONFIRMED
+   payment=PENDING                                                  │ publishes OrderConfirmed
+   inventory=PENDING
+        │
+        │ PaymentFailed  or  InventoryFailed  (first failure wins)
+        ▼
+   CANCELLED ── publishes OrderCancelled{reason}
+        │
+        └── payment-service: refund if it had charged ── publishes PaymentRefunded
+```
+
+Rules:
+
+- Both steps `SUCCEEDED` moves the order to `CONFIRMED`.
+- The first `FAILED` step moves the order to `CANCELLED` and records the reason (`payment: ...` or `inventory: ...`).
+- Once terminal, later outcomes are recorded as processed and otherwise ignored. A late `PaymentSucceeded` on a cancelled order does not change anything.
+- `@Version` on the order guards against two outcomes updating the same row concurrently once listener concurrency goes above one.
+
+`GET /api/orders/{id}` exposes `status`, `paymentStatus`, `inventoryStatus` and `cancelReason`.
+
+### Compensation
+
+When inventory fails after payment succeeded, the customer has been charged for an order that will never ship. `payment-service` listens for `OrderCancelled`, and if it holds a `SUCCEEDED` payment for that order it marks it `REFUNDED` and publishes `PaymentRefunded`. A cancelled order whose payment already failed produces no refund. Same `processed_events` guard, so a redelivered `OrderCancelled` refunds once.
+
+### Choreography over orchestration
+
+There is no central saga coordinator. Each service reacts to events and publishes its own. That keeps services independent (payment knows nothing about inventory) and adding a participant means adding a consumer, not editing a coordinator. The cost is that the overall flow is implicit; this README and the `order-events` topic are the documentation. For a flow with three participants that trade-off favors choreography. An orchestrator earns its keep when the flow has many conditional steps or needs timeouts and manual intervention.
+
+Tests: the saga test places a real order, publishes outcome events straight to the topics, and asserts the final status plus exactly one `OrderConfirmed` or `OrderCancelled` on `order-events` for that key, covering both arrival orders, a late success after cancellation, and a redelivered outcome. The payment test covers refund after success and no refund after failure.
+
 ## Status
 
-Work in progress. Done: infrastructure, `common-events`, `order-service`, `payment-service`, `inventory-service`. Next: saga completion in `order-service` and payment refunds on cancellation.
+Work in progress. Done: infrastructure, `common-events`, `order-service`, `payment-service`, `inventory-service`, saga completion and refunds. Next: `notification-service`.

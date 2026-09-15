@@ -1,5 +1,6 @@
 package com.jamespolk.ordertracking.payment.messaging;
 
+import com.jamespolk.ordertracking.events.OrderCancelled;
 import com.jamespolk.ordertracking.events.OrderPlaced;
 import com.jamespolk.ordertracking.events.Topics;
 import com.jamespolk.ordertracking.payment.domain.PaymentService;
@@ -23,8 +24,13 @@ class OrderEventsListener {
         paymentService.handle(event);
     }
 
+    @KafkaHandler
+    void on(OrderCancelled event) {
+        paymentService.handle(event);
+    }
+
     @KafkaHandler(isDefault = true)
     void ignore(Object other) {
-        // OrderConfirmed / OrderCancelled: nothing to do here yet.
+        // OrderConfirmed: nothing to compensate.
     }
 }

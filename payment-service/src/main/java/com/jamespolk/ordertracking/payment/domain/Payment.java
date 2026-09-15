@@ -59,6 +59,15 @@ public class Payment {
         return status == PaymentStatus.SUCCEEDED;
     }
 
+    /** Compensation for a cancelled order. Only a successful charge can be refunded. */
+    public boolean refund() {
+        if (!succeeded()) {
+            return false;
+        }
+        this.status = PaymentStatus.REFUNDED;
+        return true;
+    }
+
     public UUID getOrderId() {
         return orderId;
     }

@@ -3,6 +3,7 @@ package com.jamespolk.ordertracking.order.api;
 import com.jamespolk.ordertracking.order.domain.Order;
 import com.jamespolk.ordertracking.order.domain.OrderLine;
 import com.jamespolk.ordertracking.order.domain.OrderStatus;
+import com.jamespolk.ordertracking.order.domain.StepStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -14,6 +15,9 @@ public record OrderResponse(
         List<OrderLine> items,
         BigDecimal totalAmount,
         OrderStatus status,
+        StepStatus paymentStatus,
+        StepStatus inventoryStatus,
+        String cancelReason,
         Instant createdAt,
         Instant updatedAt) {
 
@@ -24,6 +28,9 @@ public record OrderResponse(
                 order.getItems(),
                 order.getTotalAmount(),
                 order.getStatus(),
+                order.getPaymentStatus(),
+                order.getInventoryStatus(),
+                order.getCancelReason(),
                 order.getCreatedAt(),
                 order.getUpdatedAt());
     }

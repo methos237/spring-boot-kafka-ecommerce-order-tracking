@@ -3,6 +3,8 @@ package com.jamespolk.ordertracking.payment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import com.jamespolk.ordertracking.events.DomainEvent;
+import com.jamespolk.ordertracking.events.OrderCancelled;
 import com.jamespolk.ordertracking.events.OrderItem;
 import com.jamespolk.ordertracking.events.OrderPlaced;
 import com.jamespolk.ordertracking.events.Topics;
@@ -82,6 +84,40 @@ class PaymentFlowIntegrationTest {
                 .hasSize(1);
     }
 
+    @Test
+    void refundsSuccessfulPaymentWhenOrderIsCancelled() {
+        OrderPlaced placed = orderPlaced(new BigDecimal("200.00"));
+        publish(placed);
+        awaitPayment(placed.orderId());
+
+        OrderCancelled cancelled = new OrderCancelled(UUID.randomUUID(), placed.orderId(), Instant.now(), "inventory");
+        publish(cancelled);
+        publish(cancelled);
+
+        await().atMost(Duration.ofSeconds(20))
+                .until(() ->
+                        payments.findByOrderId(placed.orderId()).orElseThrow().getStatus() == PaymentStatus.REFUNDED);
+        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        assertThat(outcomes).hasSize(2);
+        assertThat(typeHeader(outcomes.getLast())).endsWith("PaymentRefunded");
+        assertThat(outcomes.getLast().value()).contains("\"amount\":200.00");
+    }
+
+    @Test
+    void doesNotRefundFailedPaymentWhenOrderIsCancelled() {
+        OrderPlaced placed = orderPlaced(new BigDecimal("5000.00"));
+        publish(placed);
+        awaitPayment(placed.orderId());
+
+        publish(new OrderCancelled(UUID.randomUUID(), placed.orderId(), Instant.now(), "payment"));
+
+        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        assertThat(outcomes).hasSize(1);
+        assertThat(typeHeader(outcomes.getFirst())).endsWith("PaymentFailed");
+        assertThat(payments.findByOrderId(placed.orderId()).orElseThrow().getStatus())
+                .isEqualTo(PaymentStatus.FAILED);
+    }
+
     private static OrderPlaced orderPlaced(BigDecimal total) {
         return new OrderPlaced(
                 UUID.randomUUID(),
@@ -92,7 +128,7 @@ class PaymentFlowIntegrationTest {
                 total);
     }
 
-    private void publish(OrderPlaced event) {
+    private void publish(DomainEvent event) {
         kafkaTemplate
                 .send(Topics.ORDER_EVENTS, event.orderId().toString(), event)
                 .join();
