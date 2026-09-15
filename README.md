@@ -131,6 +131,33 @@ Stateless by design: no database, no idempotency table. Logging a replayed event
 
 Test: publishes one event per topic to Testcontainers Kafka and asserts the four timeline lines with `OutputCaptureExtension`.
 
+## Resilience: retries and dead letters
+
+Every consumer runs the same `DefaultErrorHandler`:
+
+| Failure | Attempts | Then |
+|---|---|---|
+| Transient exception (`TransientDataAccessException`, broker hiccup, anything else) | 1 + 3 retries, 2 s apart | record published to `<topic>.DLT` |
+| Deserialization failure (poison payload) | 1 | straight to `<topic>.DLT` |
+| `IllegalArgumentException` | 1 | straight to `<topic>.DLT` |
+
+Poison payloads never reach a handler: values are read through `ErrorHandlingDeserializer`, which turns a broken payload into a `DeserializationException` the error handler classifies as non-retryable. A failed attempt rolls back the whole transaction, including the `processed_events` insert, so a retry starts clean and the idempotency guard still holds once it succeeds.
+
+Dead-letter records keep the original key and bytes plus headers `kafka_dlt-original-topic`, `kafka_dlt-original-offset`, `kafka_dlt-original-consumer-group` and `kafka_dlt-exception-message`. Producers use a serializer that passes `byte[]` through untouched and JSON-encodes everything else, so a poison payload lands on the DLT exactly as it arrived rather than as a base64 string.
+
+`notification-service` tails all three `.DLT` topics with a raw-bytes consumer and logs each dead letter at `WARN` with those headers. That is the operator's view; nothing is retried from the DLT automatically.
+
+Try it:
+
+```bash
+scripts/poison.sh order-events                  # one non-JSON record
+scripts/peek.sh order-events.DLT 1              # it arrives here, payload intact
+```
+
+Expect one DLT record per consumer group that reads the topic: a poison record on `order-events` is dead-lettered by `payment-group`, `inventory-group` and `notification-group` independently, each tagged with its `kafka_dlt-original-consumer-group`. The next valid order still processes; a dead letter costs each consumer one record, not the partition.
+
+Tests: `PaymentResilienceTest` publishes raw garbage to `order-events` and asserts the DLT record carries the original bytes and headers; it also spies on the repository to fail `save` twice with a transient exception and asserts three attempts, one row, one outcome event and nothing on the DLT. `DeadLetterListenerTest` asserts the WARN line for a poison record on `payment-events`.
+
 ## Saga: from PENDING to CONFIRMED or CANCELLED
 
 `order-service` consumes `payment-events` and `inventory-events` in group `order-group` and applies each outcome to the order. Arrival order does not matter.
@@ -169,4 +196,4 @@ Tests: the saga test places a real order, publishes outcome events straight to t
 
 ## Status
 
-Work in progress. All five modules are in place and the saga runs end to end. Next: retries and dead letter topics.
+Work in progress. All five modules are in place, the saga runs end to end, and failures retry then dead-letter. Next: observability and a load script.

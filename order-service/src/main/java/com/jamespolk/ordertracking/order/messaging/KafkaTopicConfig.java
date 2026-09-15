@@ -25,4 +25,26 @@ class KafkaTopicConfig {
     NewTopic inventoryEvents() {
         return TopicBuilder.name(Topics.INVENTORY_EVENTS).partitions(PARTITIONS).build();
     }
+
+    /** One partition each: dead letters are rare and read by one operator-facing consumer. */
+    @Bean
+    NewTopic orderEventsDlt() {
+        return TopicBuilder.name(Topics.ORDER_EVENTS + Topics.DLT_SUFFIX)
+                .partitions(1)
+                .build();
+    }
+
+    @Bean
+    NewTopic paymentEventsDlt() {
+        return TopicBuilder.name(Topics.PAYMENT_EVENTS + Topics.DLT_SUFFIX)
+                .partitions(1)
+                .build();
+    }
+
+    @Bean
+    NewTopic inventoryEventsDlt() {
+        return TopicBuilder.name(Topics.INVENTORY_EVENTS + Topics.DLT_SUFFIX)
+                .partitions(1)
+                .build();
+    }
 }
