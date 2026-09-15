@@ -7,18 +7,17 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
+import org.apache.avro.specific.SpecificRecord;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import tools.jackson.databind.json.JsonMapper;
 
-class EventJsonRoundTripTest {
+class EventAvroRoundTripTest {
 
-    private static final JsonMapper MAPPER = JsonMapper.builder().build();
     private static final UUID EVENT_ID = UUID.randomUUID();
     private static final UUID ORDER_ID = UUID.randomUUID();
-    private static final Instant AT = Instant.parse("2026-09-14T12:00:00Z");
+    private static final Instant AT = Instant.parse("2026-09-14T12:00:00.123Z");
 
-    static Stream<DomainEvent> events() {
+    static Stream<SpecificRecord> events() {
         return Stream.of(
                 new OrderPlaced(
                         EVENT_ID,
@@ -38,12 +37,15 @@ class EventJsonRoundTripTest {
 
     @ParameterizedTest
     @MethodSource("events")
-    void roundTripsThroughJson(DomainEvent event) {
-        String json = MAPPER.writeValueAsString(event);
+    void roundTripsThroughAvroBinary(SpecificRecord event) {
+        byte[] bytes = Events.toBytes(event);
 
-        Object back = MAPPER.readValue(json, event.getClass());
+        SpecificRecord back = Events.fromBytes(event.getClass(), bytes);
 
         assertThat(back).isEqualTo(event);
-        assertThat(json).contains("\"orderId\":\"" + ORDER_ID + "\"");
+        assertThat(Events.eventId(back)).isEqualTo(EVENT_ID);
+        assertThat(Events.orderId(back)).isEqualTo(ORDER_ID);
+        assertThat(Events.occurredAt(back)).isEqualTo(AT);
+        assertThat(Events.type(back)).isEqualTo(event.getClass().getSimpleName());
     }
 }
