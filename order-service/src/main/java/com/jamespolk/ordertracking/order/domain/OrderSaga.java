@@ -53,26 +53,19 @@ public class OrderSaga {
 
     private void apply(DomainEvent event, Function<Order, Boolean> transition) {
         if (processedEvents.existsById(event.eventId())) {
-            log.info(
-                    "[order={}] duplicate {} ignored",
-                    event.orderId(),
-                    event.getClass().getSimpleName());
+            log.info("duplicate {} ignored", event.getClass().getSimpleName());
             return;
         }
         processedEvents.save(new ProcessedEvent(event.eventId()));
 
         Order order = orders.findById(event.orderId()).orElse(null);
         if (order == null) {
-            log.warn(
-                    "[order={}] {} for unknown order dropped",
-                    event.orderId(),
-                    event.getClass().getSimpleName());
+            log.warn("{} for unknown order dropped", event.getClass().getSimpleName());
             return;
         }
         boolean settled = transition.apply(order);
         log.info(
-                "[order={}] {} applied, status={} payment={} inventory={}",
-                order.getId(),
+                "{} applied, status={} payment={} inventory={}",
                 event.getClass().getSimpleName(),
                 order.getStatus(),
                 order.getPaymentStatus(),

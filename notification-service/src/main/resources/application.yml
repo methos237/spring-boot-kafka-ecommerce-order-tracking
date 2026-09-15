@@ -17,9 +17,15 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: com.jamespolk.ordertracking.events.kafka.EventSerializer
+      properties:
+        interceptor.classes: com.jamespolk.ordertracking.events.kafka.OrderIdHeaderInterceptor
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
+
+logging:
+  pattern:
+    correlation: "[order=%X{orderId:-}] "

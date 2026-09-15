@@ -32,13 +32,13 @@ public class PaymentService {
     @Transactional
     public void handle(OrderPlaced event) {
         if (processedEvents.existsById(event.eventId())) {
-            log.info("[order={}] duplicate OrderPlaced {} ignored", event.orderId(), event.eventId());
+            log.info("duplicate OrderPlaced {} ignored", event.eventId());
             return;
         }
         processedEvents.save(new ProcessedEvent(event.eventId()));
 
         Payment payment = payments.save(Payment.charge(event.orderId(), event.totalAmount()));
-        log.info("[order={}] payment {} {}", event.orderId(), payment.getStatus(), event.totalAmount());
+        log.info("payment {} {}", payment.getStatus(), event.totalAmount());
 
         if (payment.succeeded()) {
             publisher.publish(
@@ -52,7 +52,7 @@ public class PaymentService {
     @Transactional
     public void handle(OrderCancelled event) {
         if (processedEvents.existsById(event.eventId())) {
-            log.info("[order={}] duplicate OrderCancelled {} ignored", event.orderId(), event.eventId());
+            log.info("duplicate OrderCancelled {} ignored", event.eventId());
             return;
         }
         processedEvents.save(new ProcessedEvent(event.eventId()));
@@ -61,10 +61,10 @@ public class PaymentService {
                 .filter(Payment::refund)
                 .ifPresentOrElse(
                         payment -> {
-                            log.info("[order={}] refunded {}", event.orderId(), payment.getAmount());
+                            log.info("refunded {}", payment.getAmount());
                             publisher.publish(new PaymentRefunded(
                                     UUID.randomUUID(), event.orderId(), Instant.now(), payment.getAmount()));
                         },
-                        () -> log.info("[order={}] cancelled, nothing to refund", event.orderId()));
+                        () -> log.info("cancelled, nothing to refund"));
     }
 }

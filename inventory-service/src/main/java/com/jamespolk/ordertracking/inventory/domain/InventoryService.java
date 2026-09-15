@@ -41,19 +41,19 @@ public class InventoryService {
     @Transactional
     public void handle(OrderPlaced event) {
         if (processedEvents.existsById(event.eventId())) {
-            log.info("[order={}] duplicate OrderPlaced {} ignored", event.orderId(), event.eventId());
+            log.info("duplicate OrderPlaced {} ignored", event.eventId());
             return;
         }
         processedEvents.save(new ProcessedEvent(event.eventId()));
 
         Optional<String> failure = reserve(event.items());
         if (failure.isPresent()) {
-            log.info("[order={}] inventory failed: {}", event.orderId(), failure.get());
+            log.info("inventory failed: {}", failure.get());
             publisher.publish(new InventoryFailed(UUID.randomUUID(), event.orderId(), Instant.now(), failure.get()));
             return;
         }
         reservations.save(new Reservation(event.orderId()));
-        log.info("[order={}] inventory reserved", event.orderId());
+        log.info("inventory reserved");
         publisher.publish(new InventoryReserved(UUID.randomUUID(), event.orderId(), Instant.now()));
     }
 
