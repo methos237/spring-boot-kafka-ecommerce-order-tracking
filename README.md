@@ -9,8 +9,8 @@ A customer places an order. Payment and inventory are handled by independent ser
 ## Ten-minute tour
 
 ```bash
-docker compose up -d --wait                 # Kafka 9092, Kafka UI http://localhost:8090, Postgres 5433
-mvn -B verify                               # build + 31 tests (Testcontainers starts its own Kafka and Postgres)
+docker compose up -d --wait                 # Kafka 9092, Schema Registry 8085, Kafka UI http://localhost:8090, Postgres 5433
+mvn -B verify                               # build + 34 tests (Testcontainers starts its own Kafka, Postgres, Schema Registry)
 for s in order payment inventory notification; do
   java -jar $s-service/target/$s-service-0.1.0-SNAPSHOT.jar > /tmp/$s.log 2>&1 &
 done
@@ -21,7 +21,7 @@ scripts/peek.sh order-events.DLT 3          # ... lands here with headers, one p
 grep 'DEAD LETTER' /tmp/notification.log
 ```
 
-Open Kafka UI to watch keys spread across the three partitions of `order-events` and the DLTs fill.
+Open Kafka UI to watch keys spread across the three partitions of `order-events`, browse the registered Avro schemas, and see the DLTs fill.
 
 ## Architecture
 
@@ -43,7 +43,7 @@ POST /api/orders
 
 | Module | Role | Port | Database |
 |---|---|---|---|
-| `common-events` | Event records, topic names, Kafka serializer and interceptors | – | – |
+| `common-events` | Avro schemas and generated event classes, topic names, Kafka serializer and interceptors | – | – |
 | `order-service` | REST API, order persistence, saga state | 8080 | `orders` |
 | `payment-service` | Charges and refunds | 8081 | `payments` |
 | `inventory-service` | Stock reservation | 8082 | `inventory` |
@@ -64,7 +64,7 @@ Every record is keyed by `orderId`, so all events for one order land on one part
 
 ## Stack
 
-Java 25 · Spring Boot 4.1 · Spring for Apache Kafka 4.1 · Apache Kafka 4 (KRaft) · PostgreSQL 16 · Flyway · Micrometer + Prometheus · Testcontainers 2 · Maven · GitHub Actions
+Java 25 · Spring Boot 4.1 · Spring for Apache Kafka 4.1 · Apache Kafka 4 (KRaft) · Avro 1.12 + Confluent Schema Registry · PostgreSQL 16 · Flyway · Micrometer + Prometheus · Testcontainers 2 · Maven · GitHub Actions
 
 Prerequisites: JDK 25, Maven 3.9+, Docker with Compose v2.
 
@@ -147,6 +147,20 @@ Stateless by design: no database, no idempotency table. Logging a replayed event
 
 **Compensation.** When inventory fails after payment succeeded, the customer has been charged for an order that will never ship. `payment-service` listens for `OrderCancelled`, and if it holds a `SUCCEEDED` payment for that order it marks it `REFUNDED` and publishes `PaymentRefunded`. A cancelled order whose payment already failed produces no refund.
 
+## Serialization: Avro and the Schema Registry
+
+Events are Avro. Each event has an `.avsc` under `common-events/src/main/avro`; `avro-maven-plugin` generates the Java classes at build time, so producers and consumers share one compiled contract and a field rename is a compile error, not a runtime surprise. Logical types carry the domain types straight through: `uuid` for ids, `timestamp-millis` for `occurredAt`, `decimal(12,2)` for money.
+
+On the wire, `KafkaAvroSerializer` writes the Confluent framing (magic byte, schema id, Avro binary) and registers the schema with the registry on first use. Subjects follow `TopicRecordNameStrategy` (`order-events-com.jamespolk.ordertracking.events.OrderPlaced`), which is what lets one topic carry several event types, each with its own schema and its own compatibility history. Consumers read through `KafkaAvroDeserializer` with `specific.avro.reader=true` and get the generated class back, so `@KafkaHandler` routing by type still works.
+
+**Evolution.** Compatibility mode is `BACKWARD` (the registry default): a new schema must be able to read every record written with the old one. Adding a field with a default passes; adding a required field is rejected. Two tests pin that down: `SchemaEvolutionTest` writes a record with a v2 schema (new optional `channel` field) and reads it with the v1 generated class; `SchemaRegistryCompatibilityTest` runs a real registry container, registers v1, and asserts the registry accepts v2 and rejects a v3 with a required field.
+
+**Everything else keeps working.** `EventSerializer` still passes `byte[]` through, so poison records land on the DLT as the exact bytes that broke. The outbox stores the Avro binary of the event and the relay decodes it back to the class before sending, so the registry is never on the request path: an order can be accepted while the registry is down. Tests use Confluent's `mock://` registry, an in-JVM implementation, so no registry container is needed for the service test suites.
+
+**What JSON gave up.** Records were human-readable in `kafka-console-consumer`; `scripts/peek.sh` now goes through `kafka-avro-console-consumer` in the registry container. A type header (`__TypeId__`) told the consumer which class to build; the schema id does that now. And the hand-written Java records with sealed interfaces became generated classes: getters instead of accessors, no `sealed`, `Events.orderId(record)` where code needs the envelope without knowing the type.
+
+**Avro 1.12 gotcha.** The library refuses to instantiate classes it has not been told to trust when resolving a schema to a Java class (a deserialization-gadget defence). `Events.trustEventClasses()` registers the events package; the serializer and the consumer interceptor both call it, so every JVM in the system is covered before its first record.
+
 ## Idempotent consumers
 
 Kafka delivers at least once. Rebalances, retries, and offset resets all replay records. Each consumer with side effects keeps a `processed_events` table keyed by `eventId`; the handler checks it, inserts the id, does its work, and publishes the outcome in one database transaction. A replayed record is logged and dropped. Watch it:
@@ -164,7 +178,7 @@ Restart `payment-service` and the outcome topics do not grow.
 
 ```
 SELECT * FROM outbox ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED
-send each row: key = orderId, value = stored bytes, header __TypeId__ = stored class
+decode each row back to its event class, send with key = orderId through the Avro serializer
 wait for the broker ack, then DELETE the row
 commit
 ```
@@ -172,12 +186,12 @@ commit
 What this buys:
 
 - An order and its `OrderPlaced` commit together or not at all. Kafka down during `POST /api/orders` still returns 201; the row waits and drains when the broker returns.
-- The relay resends the stored bytes, so a duplicate send after a crash carries the same `eventId` and every consumer drops it.
+- The relay re-sends the stored event, so a duplicate send after a crash carries the same `eventId` and every consumer drops it.
 - `SKIP LOCKED` lets a second relay instance run without double-sending.
 
 What it costs: up to 500 ms added latency, one extra write per event, a poller. Change data capture (Debezium tailing the `outbox` table) removes the poller and is the usual next step in production.
 
-Test: `OutboxRelayTest` pauses the Kafka container, places an order, asserts the row is saved and stays in the outbox while relay ticks fail, unpauses, and asserts the event arrives with the stored type header and the row is gone.
+Test: `OutboxRelayTest` pauses the Kafka container, places an order, asserts the row is saved and stays in the outbox while relay ticks fail, unpauses, and asserts the event arrives intact and the row is gone.
 
 ## Resilience: retries and dead letters
 
@@ -191,7 +205,7 @@ Every consumer runs the same `DefaultErrorHandler`:
 
 Poison payloads never reach a handler: values are read through `ErrorHandlingDeserializer`, which turns a broken payload into a `DeserializationException` the error handler classifies as non-retryable. A failed attempt rolls back the whole transaction, including the `processed_events` insert, so a retry starts clean.
 
-Dead-letter records keep the original key and bytes plus headers `kafka_dlt-original-topic`, `kafka_dlt-original-offset`, `kafka_dlt-original-consumer-group` and `kafka_dlt-exception-message`. Producers use `EventSerializer`, which passes `byte[]` through untouched and JSON-encodes everything else, so a poison payload lands on the DLT exactly as it arrived rather than as a base64 string. Expect one DLT record per consumer group that reads the topic. Nothing is retried from the DLT automatically; `notification-service` logs each one at `WARN` for an operator.
+Dead-letter records keep the original key and bytes plus headers `kafka_dlt-original-topic`, `kafka_dlt-original-offset`, `kafka_dlt-original-consumer-group` and `kafka_dlt-exception-message`. Producers use `EventSerializer`, which passes `byte[]` through untouched and Avro-encodes everything else, so a poison payload lands on the DLT exactly as it arrived rather than re-encoded. Expect one DLT record per consumer group that reads the topic. Nothing is retried from the DLT automatically; `notification-service` logs each one at `WARN` for an operator.
 
 ## Observability
 
@@ -208,15 +222,17 @@ Dead-letter records keep the original key and bytes plus headers `kafka_dlt-orig
 - **Dead letter topic per source topic, one partition.** Dead letters are rare, read by one operator-facing consumer, and their original partition is preserved in a header.
 - **Flyway over `ddl-auto`.** Schema is code-reviewed SQL. Hibernate runs with `validate` and fails fast on drift. The saga columns arrived as `V2`, which is how schemas evolve in practice.
 - **Deterministic failures.** Every failure path is reproducible from the request. No random inventory misses.
-- **Testcontainers, not embedded Kafka or H2.** Tests run against the same Kafka and Postgres the services run against. CI does the same on GitHub Actions.
+- **Avro with a registry, not JSON.** JSON was fine for a demo and is easier to eyeball. Avro makes the contract explicit, compact, and enforced by something outside the codebase: the registry rejects an incompatible change before any consumer sees it. That trade is documented in the serialization section above.
+- **Testcontainers, not embedded Kafka or H2.** Tests run against the same Kafka, Postgres and Schema Registry the services run against. CI does the same on GitHub Actions.
 
 ## Tests
 
-31 tests across five modules, all in `mvn verify`.
+34 tests across five modules, all in `mvn verify`.
 
 | Level | Where | What |
 |---|---|---|
-| Unit | `common-events` | every event round-trips through Jackson |
+| Unit | `common-events` | every event round-trips through Avro binary; a v2 record reads with the v1 class |
+| Integration | `common-events` | real Schema Registry container accepts a backward-compatible schema and rejects a breaking one |
 | Web slice (`@WebMvcTest`) | order-service | 201 with `Location`, every invalid field listed, 404 mapping |
 | Integration (`@SpringBootTest` + Testcontainers) | order-service | place over HTTP, read back, consume `OrderPlaced`; saga in both arrival orders, late outcome ignored, redelivery applied once |
 | Integration | payment-service | success, failure, redelivery; refund after success, no refund after failure; poison to DLT with original bytes; transient failure retried three times then processed exactly once |
@@ -227,7 +243,7 @@ Kafka assertions drain a topic for a fixed window and filter by key, so tests ca
 
 ## Out of scope, on purpose
 
-Authentication, a UI, real payment or inventory providers, schema registry, multi-broker deployment, Kubernetes manifests. Each would be a service concern layered on top; none changes the messaging design shown here. Landing next: Avro with Schema Registry, a Kafka Streams analytics module, Kubernetes manifests. Exactly-once with chained Kafka and database transactions was considered and dropped: the outbox already closes the dual-write gap for the saga owner, and shipping both would be two answers to one question.
+Authentication, a UI, real payment or inventory providers, multi-broker deployment. Each would be a service concern layered on top; none changes the messaging design shown here. Landing next: a Kafka Streams analytics module, Kubernetes manifests. Exactly-once with chained Kafka and database transactions was considered and dropped: the outbox already closes the dual-write gap for the saga owner, and shipping both would be two answers to one question.
 
 ## License
 
