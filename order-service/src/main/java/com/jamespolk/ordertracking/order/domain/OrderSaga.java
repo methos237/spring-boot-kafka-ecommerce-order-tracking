@@ -1,12 +1,13 @@
 package com.jamespolk.ordertracking.order.domain;
 
-import com.jamespolk.ordertracking.events.DomainEvent;
+import com.jamespolk.ordertracking.events.Events;
 import com.jamespolk.ordertracking.events.OrderCancelled;
 import com.jamespolk.ordertracking.events.OrderConfirmed;
 import com.jamespolk.ordertracking.order.messaging.OrderEventPublisher;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.function.Function;
+import org.apache.avro.specific.SpecificRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,33 +33,33 @@ public class OrderSaga {
     }
 
     @Transactional
-    public void paymentSucceeded(DomainEvent event) {
+    public void paymentSucceeded(SpecificRecord event) {
         apply(event, order -> order.recordPaymentResult(StepStatus.SUCCEEDED, null));
     }
 
     @Transactional
-    public void paymentFailed(DomainEvent event, String reason) {
+    public void paymentFailed(SpecificRecord event, String reason) {
         apply(event, order -> order.recordPaymentResult(StepStatus.FAILED, "payment: " + reason));
     }
 
     @Transactional
-    public void inventoryReserved(DomainEvent event) {
+    public void inventoryReserved(SpecificRecord event) {
         apply(event, order -> order.recordInventoryResult(StepStatus.SUCCEEDED, null));
     }
 
     @Transactional
-    public void inventoryFailed(DomainEvent event, String reason) {
+    public void inventoryFailed(SpecificRecord event, String reason) {
         apply(event, order -> order.recordInventoryResult(StepStatus.FAILED, "inventory: " + reason));
     }
 
-    private void apply(DomainEvent event, Function<Order, Boolean> transition) {
-        if (processedEvents.existsById(event.eventId())) {
+    private void apply(SpecificRecord event, Function<Order, Boolean> transition) {
+        if (processedEvents.existsById(Events.eventId(event))) {
             log.info("duplicate {} ignored", event.getClass().getSimpleName());
             return;
         }
-        processedEvents.save(new ProcessedEvent(event.eventId()));
+        processedEvents.save(new ProcessedEvent(Events.eventId(event)));
 
-        Order order = orders.findById(event.orderId()).orElse(null);
+        Order order = orders.findById(Events.orderId(event)).orElse(null);
         if (order == null) {
             log.warn("{} for unknown order dropped", event.getClass().getSimpleName());
             return;

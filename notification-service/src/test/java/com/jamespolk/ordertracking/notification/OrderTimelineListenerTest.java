@@ -3,7 +3,7 @@ package com.jamespolk.ordertracking.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import com.jamespolk.ordertracking.events.DomainEvent;
+import com.jamespolk.ordertracking.events.Events;
 import com.jamespolk.ordertracking.events.InventoryReserved;
 import com.jamespolk.ordertracking.events.OrderConfirmed;
 import com.jamespolk.ordertracking.events.OrderItem;
@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.apache.avro.specific.SpecificRecord;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,7 +62,7 @@ class OrderTimelineListenerTest {
                         .containsPattern(prefix + "OrderConfirmed"));
     }
 
-    private void publish(String topic, DomainEvent event) {
-        kafkaTemplate.send(topic, event.orderId().toString(), event).join();
+    private void publish(String topic, SpecificRecord event) {
+        kafkaTemplate.send(topic, Events.orderId(event).toString(), event).join();
     }
 }

@@ -5,3 +5,8 @@ logging:
     org.testcontainers: WARN
     com.github.dockerjava: WARN
     org.hibernate: WARN
+
+spring:
+  kafka:
+    properties:
+      schema.registry.url: mock://order-tracking

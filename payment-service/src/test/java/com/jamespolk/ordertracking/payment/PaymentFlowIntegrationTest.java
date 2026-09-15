@@ -3,10 +3,12 @@ package com.jamespolk.ordertracking.payment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import com.jamespolk.ordertracking.events.DomainEvent;
+import com.jamespolk.ordertracking.events.Events;
 import com.jamespolk.ordertracking.events.OrderCancelled;
 import com.jamespolk.ordertracking.events.OrderItem;
 import com.jamespolk.ordertracking.events.OrderPlaced;
+import com.jamespolk.ordertracking.events.PaymentRefunded;
+import com.jamespolk.ordertracking.events.PaymentSucceeded;
 import com.jamespolk.ordertracking.events.Topics;
 import com.jamespolk.ordertracking.payment.domain.Payment;
 import com.jamespolk.ordertracking.payment.domain.PaymentRepository;
@@ -16,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.apache.avro.specific.SpecificRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,14 +48,14 @@ class PaymentFlowIntegrationTest {
 
         publish(placed);
 
-        Payment payment = awaitPayment(placed.orderId());
+        Payment payment = awaitPayment(placed.getOrderId());
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
         assertThat(payment.getAmount()).isEqualByComparingTo("500.00");
 
-        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        List<ConsumerRecord<String, Object>> outcomes = outcomesFor(placed.getOrderId());
         assertThat(outcomes).hasSize(1);
-        assertThat(outcomes.getFirst().value()).contains("\"amount\":500.00");
-        assertThat(typeHeader(outcomes.getFirst())).endsWith("PaymentSucceeded");
+        assertThat(outcomes.getFirst().value()).isInstanceOf(PaymentSucceeded.class);
+        assertThat(((PaymentSucceeded) outcomes.getFirst().value()).getAmount()).isEqualByComparingTo("500.00");
     }
 
     @Test
@@ -61,13 +64,13 @@ class PaymentFlowIntegrationTest {
 
         publish(placed);
 
-        Payment payment = awaitPayment(placed.orderId());
+        Payment payment = awaitPayment(placed.getOrderId());
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
         assertThat(payment.getReason()).contains("exceeds limit");
 
-        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        List<ConsumerRecord<String, Object>> outcomes = outcomesFor(placed.getOrderId());
         assertThat(outcomes).hasSize(1);
-        assertThat(typeHeader(outcomes.getFirst())).endsWith("PaymentFailed");
+        assertThat(KafkaTestSupport.type(outcomes.getFirst())).isEqualTo("PaymentFailed");
     }
 
     @Test
@@ -77,10 +80,10 @@ class PaymentFlowIntegrationTest {
         publish(placed);
         publish(placed);
 
-        awaitPayment(placed.orderId());
-        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        awaitPayment(placed.getOrderId());
+        List<ConsumerRecord<String, Object>> outcomes = outcomesFor(placed.getOrderId());
         assertThat(outcomes).hasSize(1);
-        assertThat(payments.findAll().stream().filter(p -> p.getOrderId().equals(placed.orderId())))
+        assertThat(payments.findAll().stream().filter(p -> p.getOrderId().equals(placed.getOrderId())))
                 .hasSize(1);
     }
 
@@ -88,33 +91,36 @@ class PaymentFlowIntegrationTest {
     void refundsSuccessfulPaymentWhenOrderIsCancelled() {
         OrderPlaced placed = orderPlaced(new BigDecimal("200.00"));
         publish(placed);
-        awaitPayment(placed.orderId());
+        awaitPayment(placed.getOrderId());
 
-        OrderCancelled cancelled = new OrderCancelled(UUID.randomUUID(), placed.orderId(), Instant.now(), "inventory");
+        OrderCancelled cancelled =
+                new OrderCancelled(UUID.randomUUID(), placed.getOrderId(), Instant.now(), "inventory");
         publish(cancelled);
         publish(cancelled);
 
         await().atMost(Duration.ofSeconds(20))
-                .until(() ->
-                        payments.findByOrderId(placed.orderId()).orElseThrow().getStatus() == PaymentStatus.REFUNDED);
-        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+                .until(() -> payments.findByOrderId(placed.getOrderId())
+                                .orElseThrow()
+                                .getStatus()
+                        == PaymentStatus.REFUNDED);
+        List<ConsumerRecord<String, Object>> outcomes = outcomesFor(placed.getOrderId());
         assertThat(outcomes).hasSize(2);
-        assertThat(typeHeader(outcomes.getLast())).endsWith("PaymentRefunded");
-        assertThat(outcomes.getLast().value()).contains("\"amount\":200.00");
+        assertThat(outcomes.getLast().value()).isInstanceOf(PaymentRefunded.class);
+        assertThat(((PaymentRefunded) outcomes.getLast().value()).getAmount()).isEqualByComparingTo("200.00");
     }
 
     @Test
     void doesNotRefundFailedPaymentWhenOrderIsCancelled() {
         OrderPlaced placed = orderPlaced(new BigDecimal("5000.00"));
         publish(placed);
-        awaitPayment(placed.orderId());
+        awaitPayment(placed.getOrderId());
 
-        publish(new OrderCancelled(UUID.randomUUID(), placed.orderId(), Instant.now(), "payment"));
+        publish(new OrderCancelled(UUID.randomUUID(), placed.getOrderId(), Instant.now(), "payment"));
 
-        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        List<ConsumerRecord<String, Object>> outcomes = outcomesFor(placed.getOrderId());
         assertThat(outcomes).hasSize(1);
-        assertThat(typeHeader(outcomes.getFirst())).endsWith("PaymentFailed");
-        assertThat(payments.findByOrderId(placed.orderId()).orElseThrow().getStatus())
+        assertThat(KafkaTestSupport.type(outcomes.getFirst())).isEqualTo("PaymentFailed");
+        assertThat(payments.findByOrderId(placed.getOrderId()).orElseThrow().getStatus())
                 .isEqualTo(PaymentStatus.FAILED);
     }
 
@@ -128,9 +134,9 @@ class PaymentFlowIntegrationTest {
                 total);
     }
 
-    private void publish(DomainEvent event) {
+    private void publish(SpecificRecord event) {
         kafkaTemplate
-                .send(Topics.ORDER_EVENTS, event.orderId().toString(), event)
+                .send(Topics.ORDER_EVENTS, Events.orderId(event).toString(), event)
                 .join();
     }
 
@@ -140,14 +146,10 @@ class PaymentFlowIntegrationTest {
                 .orElseThrow();
     }
 
-    private List<ConsumerRecord<String, String>> outcomesFor(UUID orderId) {
+    private List<ConsumerRecord<String, Object>> outcomesFor(UUID orderId) {
         return KafkaTestSupport.drain(kafka.getBootstrapServers(), Topics.PAYMENT_EVENTS, Duration.ofSeconds(5))
                 .stream()
                 .filter(r -> r.key().equals(orderId.toString()))
                 .toList();
-    }
-
-    private static String typeHeader(ConsumerRecord<String, String> record) {
-        return new String(record.headers().lastHeader("__TypeId__").value());
     }
 }

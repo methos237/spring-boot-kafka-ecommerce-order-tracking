@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 
 import com.jamespolk.ordertracking.events.OrderItem;
 import com.jamespolk.ordertracking.events.OrderPlaced;
-import com.jamespolk.ordertracking.events.PaymentEvent;
 import com.jamespolk.ordertracking.events.Topics;
 import com.jamespolk.ordertracking.payment.domain.PaymentRepository;
 import com.jamespolk.ordertracking.payment.messaging.PaymentEventPublisher;
@@ -20,6 +19,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.apache.avro.specific.SpecificRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -56,7 +56,7 @@ class PaymentResilienceTest {
 
     @Test
     void poisonRecordGoesStraightToDeadLetterTopicWithOriginalBytes() {
-        byte[] poison = "{not json".getBytes(StandardCharsets.UTF_8);
+        byte[] poison = "{not avro".getBytes(StandardCharsets.UTF_8);
         String key = "poison-" + UUID.randomUUID();
         try (var producer = new KafkaProducer<String, byte[]>(Map.of(
                 ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
@@ -67,14 +67,14 @@ class PaymentResilienceTest {
         }
 
         await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
-            List<ConsumerRecord<String, String>> dead = KafkaTestSupport.drain(
+            List<ConsumerRecord<String, String>> dead = KafkaTestSupport.drainRaw(
                             kafka.getBootstrapServers(), Topics.ORDER_EVENTS + Topics.DLT_SUFFIX, Duration.ofSeconds(3))
                     .stream()
                     .filter(r -> key.equals(r.key()))
                     .toList();
             assertThat(dead).hasSize(1);
             ConsumerRecord<String, String> record = dead.getFirst();
-            assertThat(record.value()).isEqualTo("{not json");
+            assertThat(record.value()).isEqualTo("{not avro");
             assertThat(new String(record.headers()
                             .lastHeader(KafkaHeaders.DLT_ORIGINAL_TOPIC)
                             .value()))
@@ -94,7 +94,7 @@ class PaymentResilienceTest {
                 .doThrow(new TransientDataAccessResourceException("broker hiccup 2"))
                 .doCallRealMethod()
                 .when(publisher)
-                .publish(any(PaymentEvent.class));
+                .publish(any(SpecificRecord.class));
         OrderPlaced placed = new OrderPlaced(
                 UUID.randomUUID(),
                 UUID.randomUUID(),
@@ -104,24 +104,24 @@ class PaymentResilienceTest {
                 new BigDecimal("42.00"));
 
         kafkaTemplate
-                .send(Topics.ORDER_EVENTS, placed.orderId().toString(), placed)
+                .send(Topics.ORDER_EVENTS, placed.getOrderId().toString(), placed)
                 .join();
 
         await().atMost(Duration.ofSeconds(30))
-                .until(() -> payments.findByOrderId(placed.orderId()).isPresent());
-        verify(publisher, times(3)).publish(any(PaymentEvent.class));
-        List<ConsumerRecord<String, String>> outcomes =
+                .until(() -> payments.findByOrderId(placed.getOrderId()).isPresent());
+        verify(publisher, times(3)).publish(any(SpecificRecord.class));
+        List<ConsumerRecord<String, Object>> outcomes =
                 KafkaTestSupport.drain(kafka.getBootstrapServers(), Topics.PAYMENT_EVENTS, Duration.ofSeconds(5))
                         .stream()
-                        .filter(r -> r.key().equals(placed.orderId().toString()))
+                        .filter(r -> r.key().equals(placed.getOrderId().toString()))
                         .toList();
         assertThat(outcomes).hasSize(1);
-        assertThat(KafkaTestSupport.drain(
+        assertThat(KafkaTestSupport.drainRaw(
                                 kafka.getBootstrapServers(),
                                 Topics.ORDER_EVENTS + Topics.DLT_SUFFIX,
                                 Duration.ofSeconds(2))
                         .stream()
-                        .filter(r -> r.key().equals(placed.orderId().toString())))
+                        .filter(r -> r.key().equals(placed.getOrderId().toString())))
                 .isEmpty();
     }
 }

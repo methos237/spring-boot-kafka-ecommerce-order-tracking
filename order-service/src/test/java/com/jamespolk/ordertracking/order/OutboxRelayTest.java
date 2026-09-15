@@ -20,7 +20,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.kafka.KafkaContainer;
-import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
@@ -35,9 +34,6 @@ class OutboxRelayTest {
 
     @Autowired
     OutboxRepository outbox;
-
-    @Autowired
-    JsonMapper jsonMapper;
 
     @Autowired
     KafkaContainer kafka;
@@ -61,15 +57,14 @@ class OutboxRelayTest {
         }
 
         await().atMost(Duration.ofSeconds(60)).until(() -> outbox.countByOrderId(order.getId()) == 0);
-        List<ConsumerRecord<String, String>> records =
+        List<ConsumerRecord<String, Object>> records =
                 KafkaTestSupport.drain(kafka.getBootstrapServers(), Topics.ORDER_EVENTS, Duration.ofSeconds(5)).stream()
                         .filter(r -> r.key().equals(order.getId().toString()))
                         .toList();
         assertThat(records).hasSize(1);
-        OrderPlaced event = jsonMapper.readValue(records.getFirst().value(), OrderPlaced.class);
-        assertThat(event.orderId()).isEqualTo(order.getId());
-        assertThat(new String(
-                        records.getFirst().headers().lastHeader("__TypeId__").value()))
-                .isEqualTo(OrderPlaced.class.getName());
+        assertThat(records.getFirst().value()).isInstanceOf(OrderPlaced.class);
+        OrderPlaced event = (OrderPlaced) records.getFirst().value();
+        assertThat(event.getOrderId()).isEqualTo(order.getId());
+        assertThat(event.getTotalAmount()).isEqualByComparingTo("10.00");
     }
 }

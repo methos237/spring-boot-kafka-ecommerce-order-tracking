@@ -31,39 +31,39 @@ public class PaymentService {
 
     @Transactional
     public void handle(OrderPlaced event) {
-        if (processedEvents.existsById(event.eventId())) {
-            log.info("duplicate OrderPlaced {} ignored", event.eventId());
+        if (processedEvents.existsById(event.getEventId())) {
+            log.info("duplicate OrderPlaced {} ignored", event.getEventId());
             return;
         }
-        processedEvents.save(new ProcessedEvent(event.eventId()));
+        processedEvents.save(new ProcessedEvent(event.getEventId()));
 
-        Payment payment = payments.save(Payment.charge(event.orderId(), event.totalAmount()));
-        log.info("payment {} {}", payment.getStatus(), event.totalAmount());
+        Payment payment = payments.save(Payment.charge(event.getOrderId(), event.getTotalAmount()));
+        log.info("payment {} {}", payment.getStatus(), event.getTotalAmount());
 
         if (payment.succeeded()) {
             publisher.publish(
-                    new PaymentSucceeded(UUID.randomUUID(), event.orderId(), Instant.now(), payment.getAmount()));
+                    new PaymentSucceeded(UUID.randomUUID(), event.getOrderId(), Instant.now(), payment.getAmount()));
         } else {
             publisher.publish(
-                    new PaymentFailed(UUID.randomUUID(), event.orderId(), Instant.now(), payment.getReason()));
+                    new PaymentFailed(UUID.randomUUID(), event.getOrderId(), Instant.now(), payment.getReason()));
         }
     }
 
     @Transactional
     public void handle(OrderCancelled event) {
-        if (processedEvents.existsById(event.eventId())) {
-            log.info("duplicate OrderCancelled {} ignored", event.eventId());
+        if (processedEvents.existsById(event.getEventId())) {
+            log.info("duplicate OrderCancelled {} ignored", event.getEventId());
             return;
         }
-        processedEvents.save(new ProcessedEvent(event.eventId()));
+        processedEvents.save(new ProcessedEvent(event.getEventId()));
 
-        payments.findByOrderId(event.orderId())
+        payments.findByOrderId(event.getOrderId())
                 .filter(Payment::refund)
                 .ifPresentOrElse(
                         payment -> {
                             log.info("refunded {}", payment.getAmount());
                             publisher.publish(new PaymentRefunded(
-                                    UUID.randomUUID(), event.orderId(), Instant.now(), payment.getAmount()));
+                                    UUID.randomUUID(), event.getOrderId(), Instant.now(), payment.getAmount()));
                         },
                         () -> log.info("cancelled, nothing to refund"));
     }

@@ -3,6 +3,7 @@ package com.jamespolk.ordertracking.inventory;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import com.jamespolk.ordertracking.events.InventoryFailed;
 import com.jamespolk.ordertracking.events.OrderItem;
 import com.jamespolk.ordertracking.events.OrderPlaced;
 import com.jamespolk.ordertracking.events.Topics;
@@ -52,10 +53,10 @@ class InventoryFlowIntegrationTest {
         awaitProcessed(placed);
 
         assertThat(available("SKU-2")).isEqualTo(before - 3);
-        assertThat(reservations.existsByOrderId(placed.orderId())).isTrue();
-        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        assertThat(reservations.existsByOrderId(placed.getOrderId())).isTrue();
+        List<ConsumerRecord<String, Object>> outcomes = outcomesFor(placed.getOrderId());
         assertThat(outcomes).hasSize(1);
-        assertThat(typeHeader(outcomes.getFirst())).endsWith("InventoryReserved");
+        assertThat(KafkaTestSupport.type(outcomes.getFirst())).isEqualTo("InventoryReserved");
     }
 
     @Test
@@ -68,11 +69,12 @@ class InventoryFlowIntegrationTest {
         awaitProcessed(placed);
 
         assertThat(available("SKU-1")).isEqualTo(sku1Before);
-        assertThat(reservations.existsByOrderId(placed.orderId())).isFalse();
-        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        assertThat(reservations.existsByOrderId(placed.getOrderId())).isFalse();
+        List<ConsumerRecord<String, Object>> outcomes = outcomesFor(placed.getOrderId());
         assertThat(outcomes).hasSize(1);
-        assertThat(typeHeader(outcomes.getFirst())).endsWith("InventoryFailed");
-        assertThat(outcomes.getFirst().value()).contains("insufficient stock for SKU-3");
+        assertThat(outcomes.getFirst().value()).isInstanceOf(InventoryFailed.class);
+        assertThat(((InventoryFailed) outcomes.getFirst().value()).getReason())
+                .contains("insufficient stock for SKU-3");
     }
 
     @Test
@@ -82,9 +84,9 @@ class InventoryFlowIntegrationTest {
         publish(placed);
         awaitProcessed(placed);
 
-        List<ConsumerRecord<String, String>> outcomes = outcomesFor(placed.orderId());
+        List<ConsumerRecord<String, Object>> outcomes = outcomesFor(placed.getOrderId());
         assertThat(outcomes).hasSize(1);
-        assertThat(outcomes.getFirst().value()).contains("unknown sku SKU-404");
+        assertThat(((InventoryFailed) outcomes.getFirst().value()).getReason()).contains("unknown sku SKU-404");
     }
 
     @Test
@@ -96,37 +98,38 @@ class InventoryFlowIntegrationTest {
         publish(placed);
         awaitProcessed(placed);
 
-        assertThat(outcomesFor(placed.orderId())).hasSize(1);
+        assertThat(outcomesFor(placed.getOrderId())).hasSize(1);
         assertThat(available("SKU-1")).isEqualTo(before - 2);
     }
 
     private static OrderPlaced orderPlaced(OrderItem... items) {
         return new OrderPlaced(
-                UUID.randomUUID(), UUID.randomUUID(), Instant.now(), "customer-1", List.of(items), BigDecimal.TEN);
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                Instant.now(),
+                "customer-1",
+                List.of(items),
+                new BigDecimal("10.00"));
     }
 
     private void publish(OrderPlaced event) {
         kafkaTemplate
-                .send(Topics.ORDER_EVENTS, event.orderId().toString(), event)
+                .send(Topics.ORDER_EVENTS, event.getOrderId().toString(), event)
                 .join();
     }
 
     private void awaitProcessed(OrderPlaced event) {
-        await().atMost(Duration.ofSeconds(20)).until(() -> processedEvents.existsById(event.eventId()));
+        await().atMost(Duration.ofSeconds(20)).until(() -> processedEvents.existsById(event.getEventId()));
     }
 
     private int available(String sku) {
         return stock.findById(sku).orElseThrow().getAvailable();
     }
 
-    private List<ConsumerRecord<String, String>> outcomesFor(UUID orderId) {
+    private List<ConsumerRecord<String, Object>> outcomesFor(UUID orderId) {
         return KafkaTestSupport.drain(kafka.getBootstrapServers(), Topics.INVENTORY_EVENTS, Duration.ofSeconds(5))
                 .stream()
                 .filter(r -> r.key().equals(orderId.toString()))
                 .toList();
-    }
-
-    private static String typeHeader(ConsumerRecord<String, String> record) {
-        return new String(record.headers().lastHeader("__TypeId__").value());
     }
 }

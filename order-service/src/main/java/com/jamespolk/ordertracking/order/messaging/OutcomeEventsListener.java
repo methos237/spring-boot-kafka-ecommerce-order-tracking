@@ -28,7 +28,7 @@ class OutcomeEventsListener {
 
     @KafkaHandler
     void on(PaymentFailed event) {
-        saga.paymentFailed(event, event.reason());
+        saga.paymentFailed(event, event.getReason());
     }
 
     @KafkaHandler
@@ -38,7 +38,7 @@ class OutcomeEventsListener {
 
     @KafkaHandler
     void on(InventoryFailed event) {
-        saga.inventoryFailed(event, event.reason());
+        saga.inventoryFailed(event, event.getReason());
     }
 
     @KafkaHandler(isDefault = true)
