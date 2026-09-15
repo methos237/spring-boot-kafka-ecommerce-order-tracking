@@ -158,6 +158,27 @@ docker exec kafka kafka-consumer-groups --bootstrap-server localhost:9092 \
 
 Restart `payment-service` and the outcome topics do not grow.
 
+## Transactional outbox
+
+`order-service` never calls Kafka from a request or a listener. `OrderEventPublisher` writes the event's JSON bytes and class name to an `outbox` table inside the caller's transaction (`Propagation.MANDATORY`, so a caller without a transaction fails loudly). `OutboxRelay` runs every 500 ms:
+
+```
+SELECT * FROM outbox ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED
+send each row: key = orderId, value = stored bytes, header __TypeId__ = stored class
+wait for the broker ack, then DELETE the row
+commit
+```
+
+What this buys:
+
+- An order and its `OrderPlaced` commit together or not at all. Kafka down during `POST /api/orders` still returns 201; the row waits and drains when the broker returns.
+- The relay resends the stored bytes, so a duplicate send after a crash carries the same `eventId` and every consumer drops it.
+- `SKIP LOCKED` lets a second relay instance run without double-sending.
+
+What it costs: up to 500 ms added latency, one extra write per event, a poller. Change data capture (Debezium tailing the `outbox` table) removes the poller and is the usual next step in production.
+
+Test: `OutboxRelayTest` pauses the Kafka container, places an order, asserts the row is saved and stays in the outbox while relay ticks fail, unpauses, and asserts the event arrives with the stored type header and the row is gone.
+
 ## Resilience: retries and dead letters
 
 Every consumer runs the same `DefaultErrorHandler`:
@@ -183,7 +204,7 @@ Dead-letter records keep the original key and bytes plus headers `kafka_dlt-orig
 - **Key by `orderId`.** Per-order ordering is what the saga needs; customer-level ordering is not. The key also drives the `X-Order-Id` header and the MDC.
 - **Choreography, not orchestration.** No central coordinator. Each service reacts to events and publishes its own, so payment knows nothing about inventory and adding a participant means adding a consumer. The cost is an implicit flow, which this README and the `order-events` topic document. With three participants that trade favors choreography; an orchestrator earns its keep with many conditional steps, timeouts, or manual intervention.
 - **Idempotency table over exactly-once.** A `processed_events` table is a few lines per service, works with any broker semantics, and survives offset resets. Kafka transactions chained with the database are a stretch item, not a baseline.
-- **Publish inside the transaction.** Outcome events are sent before the database commit. If the commit then fails, the event is already out and the retry sends another. Consumers tolerate that because they are idempotent by `eventId`... except the retry mints a new `eventId`. This is the known gap; a transactional outbox closes it and is the first stretch item.
+- **Transactional outbox in order-service, direct publish elsewhere.** The order service owns the saga's source of truth, so its events must never diverge from its rows: `OrderPlaced`, `OrderConfirmed` and `OrderCancelled` go through an outbox table committed with the state change, and a relay drains it to Kafka. Payment and inventory publish directly inside their handler transaction. A commit failure there re-runs the handler with the same input and re-publishes; the outcome differs only in `eventId`, and the saga treats a second outcome for a settled order as a no-op. The asymmetry is deliberate: the outbox costs a table and a poller per service, and only the saga owner needs the guarantee.
 - **Dead letter topic per source topic, one partition.** Dead letters are rare, read by one operator-facing consumer, and their original partition is preserved in a header.
 - **Flyway over `ddl-auto`.** Schema is code-reviewed SQL. Hibernate runs with `validate` and fails fast on drift. The saga columns arrived as `V2`, which is how schemas evolve in practice.
 - **Deterministic failures.** Every failure path is reproducible from the request. No random inventory misses.
@@ -206,7 +227,7 @@ Kafka assertions drain a topic for a fixed window and filter by key, so tests ca
 
 ## Out of scope, on purpose
 
-Authentication, a UI, real payment or inventory providers, schema registry, multi-broker deployment, Kubernetes manifests. Each would be a service concern layered on top; none changes the messaging design shown here. Candidates for a follow-up: transactional outbox, Avro with Schema Registry, a Kafka Streams analytics module, exactly-once with chained transactions.
+Authentication, a UI, real payment or inventory providers, schema registry, multi-broker deployment, Kubernetes manifests. Each would be a service concern layered on top; none changes the messaging design shown here. Landing next: Avro with Schema Registry, a Kafka Streams analytics module, Kubernetes manifests. Exactly-once with chained Kafka and database transactions was considered and dropped: the outbox already closes the dual-write gap for the saga owner, and shipping both would be two answers to one question.
 
 ## License
 

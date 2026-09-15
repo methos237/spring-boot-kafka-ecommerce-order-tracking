@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class OrderService {
@@ -19,11 +20,8 @@ public class OrderService {
         this.publisher = publisher;
     }
 
-    /**
-     * Saves the order in its own transaction, then publishes. A publish failure leaves a saved
-     * order with no event; the transactional outbox pattern that closes that gap is out of scope
-     * for now.
-     */
+    /** Order row and its {@code OrderPlaced} outbox row commit together, or not at all. */
+    @Transactional
     public Order placeOrder(String customerId, List<OrderLine> items) {
         Order order = orders.save(Order.place(customerId, items));
         publisher.publish(new OrderPlaced(
