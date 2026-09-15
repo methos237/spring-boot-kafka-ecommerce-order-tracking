@@ -12,6 +12,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -40,6 +41,21 @@ public class Order {
     @Column(name = "status", nullable = false)
     private OrderStatus status;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_status", nullable = false)
+    private StepStatus paymentStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "inventory_status", nullable = false)
+    private StepStatus inventoryStatus;
+
+    @Column(name = "cancel_reason")
+    private String cancelReason;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -54,10 +70,49 @@ public class Order {
         this.items = new ArrayList<>(items);
         this.totalAmount = items.stream().map(OrderLine::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
         this.status = OrderStatus.PENDING;
+        this.paymentStatus = StepStatus.PENDING;
+        this.inventoryStatus = StepStatus.PENDING;
     }
 
     public static Order place(String customerId, List<OrderLine> items) {
         return new Order(UUID.randomUUID(), customerId, items);
+    }
+
+    /**
+     * Records the payment outcome. Returns true when this call moved the order to a terminal state.
+     * Events that arrive after the order is already terminal are ignored, whatever their order.
+     */
+    public boolean recordPaymentResult(StepStatus result, String reason) {
+        if (isTerminal()) {
+            return false;
+        }
+        this.paymentStatus = result;
+        return settle(result, reason);
+    }
+
+    public boolean recordInventoryResult(StepStatus result, String reason) {
+        if (isTerminal()) {
+            return false;
+        }
+        this.inventoryStatus = result;
+        return settle(result, reason);
+    }
+
+    private boolean settle(StepStatus latest, String reason) {
+        if (latest == StepStatus.FAILED) {
+            this.status = OrderStatus.CANCELLED;
+            this.cancelReason = reason;
+            return true;
+        }
+        if (paymentStatus == StepStatus.SUCCEEDED && inventoryStatus == StepStatus.SUCCEEDED) {
+            this.status = OrderStatus.CONFIRMED;
+            return true;
+        }
+        return false;
+    }
+
+    public boolean isTerminal() {
+        return status != OrderStatus.PENDING;
     }
 
     @PrePersist
@@ -88,6 +143,18 @@ public class Order {
 
     public OrderStatus getStatus() {
         return status;
+    }
+
+    public StepStatus getPaymentStatus() {
+        return paymentStatus;
+    }
+
+    public StepStatus getInventoryStatus() {
+        return inventoryStatus;
+    }
+
+    public String getCancelReason() {
+        return cancelReason;
     }
 
     public Instant getCreatedAt() {
