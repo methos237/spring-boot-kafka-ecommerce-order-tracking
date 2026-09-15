@@ -21,7 +21,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.client.RestTestClient;
 import org.testcontainers.kafka.KafkaContainer;
-import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration.class)
@@ -31,9 +30,6 @@ class OrderApiIntegrationTest {
 
     @Autowired
     RestTestClient client;
-
-    @Autowired
-    JsonMapper jsonMapper;
 
     @Autowired
     KafkaContainer kafka;
@@ -69,16 +65,16 @@ class OrderApiIntegrationTest {
                 .jsonPath("$.status")
                 .isEqualTo("PENDING");
 
-        List<ConsumerRecord<String, String>> records =
+        List<ConsumerRecord<String, Object>> records =
                 KafkaTestSupport.drain(kafka.getBootstrapServers(), Topics.ORDER_EVENTS, Duration.ofSeconds(5)).stream()
                         .filter(r -> r.key().equals(created.id().toString()))
                         .toList();
         assertThat(records).hasSize(1);
-        OrderPlaced event = jsonMapper.readValue(records.getFirst().value(), OrderPlaced.class);
-        assertThat(event.orderId()).isEqualTo(created.id());
-        assertThat(event.customerId()).isEqualTo("customer-1");
-        assertThat(event.totalAmount()).isEqualByComparingTo(new BigDecimal("39.98"));
-        assertThat(event.items()).hasSize(1);
+        OrderPlaced event = (OrderPlaced) records.getFirst().value();
+        assertThat(event.getOrderId()).isEqualTo(created.id());
+        assertThat(event.getCustomerId()).isEqualTo("customer-1");
+        assertThat(event.getTotalAmount()).isEqualByComparingTo(new BigDecimal("39.98"));
+        assertThat(event.getItems()).hasSize(1);
     }
 
     @Test

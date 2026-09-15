@@ -1,7 +1,8 @@
 package com.jamespolk.ordertracking.payment.messaging;
 
-import com.jamespolk.ordertracking.events.PaymentEvent;
+import com.jamespolk.ordertracking.events.Events;
 import com.jamespolk.ordertracking.events.Topics;
+import org.apache.avro.specific.SpecificRecord;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
@@ -14,7 +15,7 @@ public class PaymentEventPublisher {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    public void publish(PaymentEvent event) {
-        kafkaTemplate.send(Topics.PAYMENT_EVENTS, event.orderId().toString(), event);
+    public void publish(SpecificRecord event) {
+        kafkaTemplate.send(Topics.PAYMENT_EVENTS, Events.orderId(event).toString(), event);
     }
 }

@@ -40,21 +40,21 @@ public class InventoryService {
 
     @Transactional
     public void handle(OrderPlaced event) {
-        if (processedEvents.existsById(event.eventId())) {
-            log.info("duplicate OrderPlaced {} ignored", event.eventId());
+        if (processedEvents.existsById(event.getEventId())) {
+            log.info("duplicate OrderPlaced {} ignored", event.getEventId());
             return;
         }
-        processedEvents.save(new ProcessedEvent(event.eventId()));
+        processedEvents.save(new ProcessedEvent(event.getEventId()));
 
-        Optional<String> failure = reserve(event.items());
+        Optional<String> failure = reserve(event.getItems());
         if (failure.isPresent()) {
             log.info("inventory failed: {}", failure.get());
-            publisher.publish(new InventoryFailed(UUID.randomUUID(), event.orderId(), Instant.now(), failure.get()));
+            publisher.publish(new InventoryFailed(UUID.randomUUID(), event.getOrderId(), Instant.now(), failure.get()));
             return;
         }
-        reservations.save(new Reservation(event.orderId()));
+        reservations.save(new Reservation(event.getOrderId()));
         log.info("inventory reserved");
-        publisher.publish(new InventoryReserved(UUID.randomUUID(), event.orderId(), Instant.now()));
+        publisher.publish(new InventoryReserved(UUID.randomUUID(), event.getOrderId(), Instant.now()));
     }
 
     /**
@@ -63,20 +63,20 @@ public class InventoryService {
      */
     private Optional<String> reserve(List<OrderItem> items) {
         Map<String, Stock> locked = stock
-                .findAllBySkuIn(items.stream().map(OrderItem::sku).toList())
+                .findAllBySkuIn(items.stream().map(OrderItem::getSku).toList())
                 .stream()
                 .collect(Collectors.toMap(Stock::getSku, Function.identity()));
         for (OrderItem item : items) {
-            Stock s = locked.get(item.sku());
+            Stock s = locked.get(item.getSku());
             if (s == null) {
-                return Optional.of("unknown sku " + item.sku());
+                return Optional.of("unknown sku " + item.getSku());
             }
-            if (!s.canReserve(item.quantity())) {
-                return Optional.of("insufficient stock for " + item.sku() + ": requested " + item.quantity()
+            if (!s.canReserve(item.getQuantity())) {
+                return Optional.of("insufficient stock for " + item.getSku() + ": requested " + item.getQuantity()
                         + ", available " + s.getAvailable());
             }
         }
-        items.forEach(item -> locked.get(item.sku()).reserve(item.quantity()));
+        items.forEach(item -> locked.get(item.getSku()).reserve(item.getQuantity()));
         return Optional.empty();
     }
 }

@@ -8,6 +8,8 @@ logging:
 
 spring:
   kafka:
+    properties:
+      schema.registry.url: mock://order-tracking
     producer:
       properties:
         # fail fast while the broker is paused so the relay rolls back and retries next tick

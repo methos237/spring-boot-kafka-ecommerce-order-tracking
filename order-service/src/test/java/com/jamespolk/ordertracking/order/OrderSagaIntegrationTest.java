@@ -3,7 +3,7 @@ package com.jamespolk.ordertracking.order;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import com.jamespolk.ordertracking.events.DomainEvent;
+import com.jamespolk.ordertracking.events.Events;
 import com.jamespolk.ordertracking.events.InventoryFailed;
 import com.jamespolk.ordertracking.events.InventoryReserved;
 import com.jamespolk.ordertracking.events.PaymentSucceeded;
@@ -20,7 +20,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.avro.specific.SpecificRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -118,8 +118,8 @@ class OrderSagaIntegrationTest {
         return new InventoryReserved(UUID.randomUUID(), order.getId(), Instant.now());
     }
 
-    private void publish(String topic, DomainEvent event) {
-        kafkaTemplate.send(topic, event.orderId().toString(), event).join();
+    private void publish(String topic, SpecificRecord event) {
+        kafkaTemplate.send(topic, Events.orderId(event).toString(), event).join();
     }
 
     private Order awaitStatus(UUID orderId, OrderStatus expected) {
@@ -127,19 +127,14 @@ class OrderSagaIntegrationTest {
                 .until(() -> orders.findById(orderId).orElseThrow(), o -> o.getStatus() == expected);
     }
 
-    private void awaitProcessed(DomainEvent event) {
-        await().atMost(Duration.ofSeconds(20)).until(() -> processedEvents.existsById(event.eventId()));
+    private void awaitProcessed(SpecificRecord event) {
+        await().atMost(Duration.ofSeconds(20)).until(() -> processedEvents.existsById(Events.eventId(event)));
     }
 
     private List<String> emittedTypes(UUID orderId) {
         return KafkaTestSupport.drain(kafka.getBootstrapServers(), Topics.ORDER_EVENTS, Duration.ofSeconds(5)).stream()
                 .filter(r -> r.key().equals(orderId.toString()))
-                .map(OrderSagaIntegrationTest::typeHeader)
-                .map(type -> type.substring(type.lastIndexOf('.') + 1))
+                .map(KafkaTestSupport::type)
                 .toList();
-    }
-
-    private static String typeHeader(ConsumerRecord<String, String> record) {
-        return new String(record.headers().lastHeader("__TypeId__").value());
     }
 }

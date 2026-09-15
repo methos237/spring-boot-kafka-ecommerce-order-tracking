@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "name": "InventoryReserved",
+  "namespace": "com.jamespolk.ordertracking.events",
+  "doc": "Published by inventory-service to inventory-events.",
+  "fields": [
+    {"name": "eventId",    "type": {"type": "string", "logicalType": "uuid"}},
+    {"name": "orderId",    "type": {"type": "string", "logicalType": "uuid"}},
+    {"name": "occurredAt", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

@@ -1,22 +1,22 @@
 package com.jamespolk.ordertracking.order.messaging;
 
+import com.jamespolk.ordertracking.events.Events;
 import com.jamespolk.ordertracking.events.Topics;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import org.apache.avro.specific.SpecificRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.internals.RecordHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.mapping.AbstractJavaTypeMapper;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Drains the outbox to Kafka. Each row is sent with its stored bytes and a type header, so consumers
- * see exactly what a direct publish would have produced, including the original {@code eventId}. A
+ * Drains the outbox to Kafka. Each row is decoded back to its event class and sent through the normal
+ * Avro serializer, so consumers see exactly what a direct publish would have produced, including the
+ * original {@code eventId}. A
  * row is deleted only after the broker acknowledges it; a crash in between means a duplicate send,
  * which consumers already tolerate by {@code eventId}.
  */
@@ -54,12 +54,16 @@ public class OutboxRelay {
     }
 
     private static ProducerRecord<String, Object> toRecord(OutboxMessage message) {
-        var record = new ProducerRecord<String, Object>(
-                Topics.ORDER_EVENTS, message.getOrderId().toString(), message.getPayload());
-        record.headers()
-                .add(new RecordHeader(
-                        AbstractJavaTypeMapper.DEFAULT_CLASSID_FIELD_NAME,
-                        message.getEventType().getBytes(StandardCharsets.UTF_8)));
-        return record;
+        return new ProducerRecord<>(Topics.ORDER_EVENTS, message.getOrderId().toString(), decode(message));
+    }
+
+    private static SpecificRecord decode(OutboxMessage message) {
+        try {
+            Class<? extends SpecificRecord> type =
+                    Class.forName(message.getEventType()).asSubclass(SpecificRecord.class);
+            return Events.fromBytes(type, message.getPayload());
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("unknown outbox event type " + message.getEventType(), e);
+        }
     }
 }

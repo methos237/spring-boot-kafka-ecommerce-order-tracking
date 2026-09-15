@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "name": "OrderConfirmed",
+  "namespace": "com.jamespolk.ordertracking.events",
+  "doc": "Payment and inventory both succeeded. Published by order-service to order-events.",
+  "fields": [
+    {"name": "eventId",    "type": {"type": "string", "logicalType": "uuid"}},
+    {"name": "orderId",    "type": {"type": "string", "logicalType": "uuid"}},
+    {"name": "occurredAt", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

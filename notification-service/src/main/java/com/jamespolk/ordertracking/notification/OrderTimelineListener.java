@@ -1,6 +1,5 @@
 package com.jamespolk.ordertracking.notification;
 
-import com.jamespolk.ordertracking.events.DomainEvent;
 import com.jamespolk.ordertracking.events.InventoryFailed;
 import com.jamespolk.ordertracking.events.InventoryReserved;
 import com.jamespolk.ordertracking.events.OrderCancelled;
@@ -10,6 +9,7 @@ import com.jamespolk.ordertracking.events.PaymentFailed;
 import com.jamespolk.ordertracking.events.PaymentRefunded;
 import com.jamespolk.ordertracking.events.PaymentSucceeded;
 import com.jamespolk.ordertracking.events.Topics;
+import org.apache.avro.specific.SpecificRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaHandler;
@@ -28,22 +28,22 @@ class OrderTimelineListener {
 
     @KafkaHandler
     void on(OrderPlaced e) {
-        line(e, "customer=" + e.customerId() + " items=" + e.items().size() + " total=" + e.totalAmount());
+        line(e, "customer=" + e.getCustomerId() + " items=" + e.getItems().size() + " total=" + e.getTotalAmount());
     }
 
     @KafkaHandler
     void on(PaymentSucceeded e) {
-        line(e, "amount=" + e.amount());
+        line(e, "amount=" + e.getAmount());
     }
 
     @KafkaHandler
     void on(PaymentFailed e) {
-        line(e, "reason=" + e.reason());
+        line(e, "reason=" + e.getReason());
     }
 
     @KafkaHandler
     void on(PaymentRefunded e) {
-        line(e, "amount=" + e.amount());
+        line(e, "amount=" + e.getAmount());
     }
 
     @KafkaHandler
@@ -53,7 +53,7 @@ class OrderTimelineListener {
 
     @KafkaHandler
     void on(InventoryFailed e) {
-        line(e, "reason=" + e.reason());
+        line(e, "reason=" + e.getReason());
     }
 
     @KafkaHandler
@@ -63,10 +63,10 @@ class OrderTimelineListener {
 
     @KafkaHandler
     void on(OrderCancelled e) {
-        line(e, "reason=" + e.reason());
+        line(e, "reason=" + e.getReason());
     }
 
-    private static void line(DomainEvent event, String detail) {
+    private static void line(SpecificRecord event, String detail) {
         log.info("{}{}", event.getClass().getSimpleName(), detail.isEmpty() ? "" : " " + detail);
     }
 }

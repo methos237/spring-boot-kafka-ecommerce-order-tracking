@@ -1,5 +1,6 @@
 package com.jamespolk.ordertracking.events.kafka;
 
+import com.jamespolk.ordertracking.events.Events;
 import java.nio.charset.StandardCharsets;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -15,6 +16,10 @@ import org.springframework.kafka.listener.RecordInterceptor;
 public class OrderIdMdcInterceptor implements RecordInterceptor<Object, Object> {
 
     public static final String MDC_KEY = "orderId";
+
+    public OrderIdMdcInterceptor() {
+        Events.trustEventClasses();
+    }
 
     @Override
     public ConsumerRecord<Object, Object> intercept(
