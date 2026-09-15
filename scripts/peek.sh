@@ -10,5 +10,5 @@ docker exec kafka kafka-console-consumer \
   --from-beginning \
   --max-messages "$n" \
   --timeout-ms 5000 \
-  --property print.key=true \
-  --property key.separator=' => ' 2>/dev/null || true
+  --formatter-property print.key=true \
+  --formatter-property key.separator=' => ' 2>/dev/null || true
