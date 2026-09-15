@@ -45,7 +45,7 @@ Java 25 · Spring Boot 4.1 · Spring for Apache Kafka 4.1 · Apache Kafka 4 (KRa
 ## Run
 
 ```bash
-docker compose up -d        # Kafka on 9092, Kafka UI on http://localhost:8090, Postgres on 5432
+docker compose up -d        # Kafka on 9092, Kafka UI on http://localhost:8090, Postgres on 5433
 mvn -B verify               # build and run all tests (Testcontainers starts its own Kafka and Postgres)
 ```
 
