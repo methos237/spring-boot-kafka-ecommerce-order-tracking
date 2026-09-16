@@ -1,0 +1,20 @@
+logging:
+  level:
+    org.apache.kafka: WARN
+    org.springframework.kafka: WARN
+    org.testcontainers: WARN
+    com.github.dockerjava: WARN
+
+spring:
+  kafka:
+    properties:
+      schema.registry.url: mock://order-tracking
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: com.jamespolk.ordertracking.events.kafka.EventSerializer
+      properties:
+        value.subject.name.strategy: io.confluent.kafka.serializers.subject.TopicRecordNameStrategy
+        avro.use.logical.type.converters: true
+    streams:
+      properties:
+        state.dir: ${java.io.tmpdir}/order-analytics-${random.uuid}
