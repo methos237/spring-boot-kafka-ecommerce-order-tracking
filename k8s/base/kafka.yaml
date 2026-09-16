@@ -30,6 +30,9 @@ spec:
       labels:
         app: kafka
     spec:
+      # Kubernetes injects <SERVICE>_PORT=tcp://... for every Service in the namespace; Confluent images
+      # read <PREFIX>_* variables as configuration and choke on it. Nobody here needs service links.
+      enableServiceLinks: false
       containers:
         - name: kafka
           image: confluentinc/cp-kafka:8.3.1

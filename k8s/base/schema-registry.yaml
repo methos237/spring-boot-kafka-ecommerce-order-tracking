@@ -22,6 +22,9 @@ spec:
       labels:
         app: schema-registry
     spec:
+      # Kubernetes injects <SERVICE>_PORT=tcp://... for every Service in the namespace; Confluent images
+      # read <PREFIX>_* variables as configuration and choke on it. Nobody here needs service links.
+      enableServiceLinks: false
       initContainers:
         - name: wait-for-kafka
           image: busybox:1.37
