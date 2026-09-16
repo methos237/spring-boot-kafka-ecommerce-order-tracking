@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-analytics
+spec:
+  selector:
+    app: order-analytics
+  ports:
+    - port: 8084
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-analytics
+  template:
+    metadata:
+      labels:
+        app: order-analytics
+    spec:
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox:1.37
+          command: ["sh", "-c", "until nc -z kafka 9092 && nc -z schema-registry 8081; do sleep 2; done"]
+      containers:
+        - name: order-analytics
+          image: order-tracking/order-analytics:0.1.0-SNAPSHOT
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: app-config
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8084
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8084
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 320Mi }
+            limits: { memory: 512Mi }

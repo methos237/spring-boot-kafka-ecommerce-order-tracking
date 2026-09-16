@@ -1,0 +1,73 @@
+# Single-node KRaft broker. Deliberately not production shaped: one replica, one volume, no TLS.
+# A real cluster runs Strimzi or a managed Kafka; the applications only need the bootstrap address.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+spec:
+  clusterIP: None
+  # The broker must resolve kafka-0.kafka (its own controller voter address) before it can become
+  # Ready; without this the DNS record only appears after readiness and the pod restarts forever.
+  publishNotReadyAddresses: true
+  selector:
+    app: kafka
+  ports:
+    - name: broker
+      port: 9092
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:8.3.1
+          ports:
+            - containerPort: 9092
+          env:
+            - { name: CLUSTER_ID, value: MkU3OEVBNTcwNTJENDM2Qk }
+            - { name: KAFKA_NODE_ID, value: "1" }
+            - { name: KAFKA_PROCESS_ROLES, value: "broker,controller" }
+            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: 1@kafka-0.kafka:29093 }
+            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093" }
+            - { name: KAFKA_ADVERTISED_LISTENERS, value: PLAINTEXT://kafka:9092 }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME, value: PLAINTEXT }
+            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: CONTROLLER }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
+            - { name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: "0" }
+            - { name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: "false" }
+            - { name: KAFKA_LOG_DIRS, value: /var/lib/kafka/data }
+            - { name: KAFKA_HEAP_OPTS, value: -Xmx512m -Xms256m }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 250m, memory: 768Mi }
+            limits: { memory: 1Gi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi

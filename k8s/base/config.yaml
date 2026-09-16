@@ -1,0 +1,9 @@
+# Shared by every application pod. Spring Boot reads these as relaxed-binding property overrides.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  SPRING_KAFKA_PROPERTIES_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+  JAVA_TOOL_OPTIONS: -Xmx256m -XX:+UseSerialGC -XX:TieredStopAtLevel=1
