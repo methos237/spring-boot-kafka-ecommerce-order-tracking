@@ -11,14 +11,16 @@ A customer places an order. Payment and inventory are handled by independent ser
 ```bash
 docker compose up -d --wait                 # Kafka 9092, Schema Registry 8085, Kafka UI http://localhost:8090, Postgres 5433
 mvn -B verify                               # build + 34 tests (Testcontainers starts its own Kafka, Postgres, Schema Registry)
-for s in order payment inventory notification; do
-  java -jar $s-service/target/$s-service-0.1.0-SNAPSHOT.jar > /tmp/$s.log 2>&1 &
+for s in order-service payment-service inventory-service notification-service order-analytics; do
+  java -jar $s/target/$s-0.1.0-SNAPSHOT.jar > /tmp/$s.log 2>&1 &
 done
 scripts/load.sh                             # 50 orders: 30 confirm, 20 cancel, verified via GET
 scripts/status.sh                           # consumer lag per group and partition, should read 0
+curl localhost:8084/analytics/orders-per-minute?last=5      # Kafka Streams window counts
+curl localhost:8084/analytics/customers/customer-0/revenue   # confirmed revenue for one customer
 scripts/poison.sh order-events              # one bad record ...
 scripts/peek.sh order-events.DLT 3          # ... lands here with headers, one per consuming group
-grep 'DEAD LETTER' /tmp/notification.log
+grep 'DEAD LETTER' /tmp/notification-service.log
 ```
 
 Open Kafka UI to watch keys spread across the three partitions of `order-events`, browse the registered Avro schemas, and see the DLTs fill.
@@ -39,6 +41,7 @@ POST /api/orders
        ▼
  notification-service  (consumes all three topics + DLTs, logs timeline and dead letters)
  payment-service       (on OrderCancelled: refund if it charged)
+ order-analytics       (Kafka Streams over order-events: orders per minute, revenue per customer)
 ```
 
 | Module | Role | Port | Database |
@@ -48,15 +51,16 @@ POST /api/orders
 | `payment-service` | Charges and refunds | 8081 | `payments` |
 | `inventory-service` | Stock reservation | 8082 | `inventory` |
 | `notification-service` | Order timeline and dead letter log | 8083 | – |
+| `order-analytics` | Kafka Streams aggregations with interactive queries | 8084 | state stores |
 
 ### Event flow
 
 | Topic | Event | Producer | Consumers |
 |---|---|---|---|
-| `order-events` | `OrderPlaced{customerId, items, totalAmount}` | order | payment, inventory, notification |
+| `order-events` | `OrderPlaced{customerId, items, totalAmount}` | order | payment, inventory, notification, analytics |
 | `payment-events` | `PaymentSucceeded{amount}` / `PaymentFailed{reason}` | payment | order, notification |
 | `inventory-events` | `InventoryReserved` / `InventoryFailed{reason}` | inventory | order, notification |
-| `order-events` | `OrderConfirmed` / `OrderCancelled{reason}` | order | payment (refund), notification |
+| `order-events` | `OrderConfirmed` / `OrderCancelled{reason}` | order | payment (refund), notification, analytics |
 | `payment-events` | `PaymentRefunded{amount}` | payment | notification |
 | `*.DLT` | original bytes + `kafka_dlt-*` headers | any consumer's error handler | notification |
 
@@ -64,7 +68,7 @@ Every record is keyed by `orderId`, so all events for one order land on one part
 
 ## Stack
 
-Java 25 · Spring Boot 4.1 · Spring for Apache Kafka 4.1 · Apache Kafka 4 (KRaft) · Avro 1.12 + Confluent Schema Registry · PostgreSQL 16 · Flyway · Micrometer + Prometheus · Testcontainers 2 · Maven · GitHub Actions
+Java 25 · Spring Boot 4.1 · Spring for Apache Kafka 4.1 · Apache Kafka 4 (KRaft) · Kafka Streams · Avro 1.12 + Confluent Schema Registry · PostgreSQL 16 · Flyway · Micrometer + Prometheus · Testcontainers 2 · Maven · GitHub Actions
 
 Prerequisites: JDK 25, Maven 3.9+, Docker with Compose v2.
 
@@ -122,6 +126,29 @@ One consumer group subscribed to all three topics. Every event becomes one log l
 ```
 
 Stateless by design: no database, no idempotency table. Logging a replayed event twice is harmless, and keeping the service free of state means it can be restarted, rewound, or scaled without coordination. A real system would hand each line to an email, SMS or push channel here.
+
+## Stream processing: order-analytics
+
+A Kafka Streams application over `order-events`, no database. Two aggregations, both kept in local state stores and served straight from them:
+
+| Store | Built from | Query |
+|---|---|---|
+| `orders-per-minute` | `OrderPlaced`, tumbling one-minute windows | `GET /analytics/orders-per-minute?last=10` |
+| `revenue-by-customer` | `OrderConfirmed` joined to its `OrderPlaced`, summed per customer | `GET /analytics/customers/{id}/revenue` |
+
+**Event time, not arrival time.** A `TimestampExtractor` reads `occurredAt` from every event, so windows describe when orders happened. Replaying last week's topic fills last week's windows instead of piling everything into "now".
+
+**Why a KStream-KTable join for revenue.** `OrderConfirmed` carries no amount; the amount lives on `OrderPlaced`. Both events share the order id as key, so they sit on the same partition and the same Streams task processes them in offset order. `OrderPlaced` is materialised into a table and each `OrderConfirmed` looks its order up there. Cancelled orders never confirm, so refunds need no special handling: they were never counted. The join result is re-keyed by customer (one repartition topic) and summed. Amounts are stored as long cents, exact and with a built-in serde.
+
+**Interactive queries.** The REST layer reads the state stores through `KafkaStreams.store(...)`. Until the instance is `RUNNING` (startup, rebalance, restore) it answers 503 with a problem detail rather than a wrong number. Single instance here; with several, a query would have to be routed to the instance that owns the key, which is what `KafkaStreams.queryMetadataForKey` exists for.
+
+**Durability.** State stores are RocksDB on local disk, backed by changelog topics the application creates (`order-analytics-*-changelog`). Wipe the disk and the stores rebuild from the changelogs on restart.
+
+**Poison records.** `LogAndContinueExceptionHandler` is configured, so a payload that fails Avro deserialization is logged and skipped. The default handler would kill the stream thread. The same `scripts/poison.sh order-events` that fills the DLTs elsewhere costs this app one skipped record.
+
+**Idempotency, honestly.** The consumers in this system drop redelivered events by `eventId`. The analytics topology does not: a redelivered `OrderConfirmed` is a second join hit and double-counts that order. Deduplicating would take a keyed store of seen event ids with a retention window, or Kafka Streams exactly-once processing plus an idempotent upstream. Both are known patterns; neither is here yet, and the topology test pins the current behaviour so the gap is visible rather than hidden.
+
+Tests: `AnalyticsTopologyTest` drives the topology with `TopologyTestDriver`, no broker, no containers, milliseconds per run: window counts across a minute boundary, revenue only for confirmed orders, unknown customer empty. `AnalyticsApiSmokeTest` runs the real application against Testcontainers Kafka with the mock registry and asserts the two endpoints over HTTP.
 
 ## Saga: from PENDING to CONFIRMED or CANCELLED
 
@@ -223,11 +250,12 @@ Dead-letter records keep the original key and bytes plus headers `kafka_dlt-orig
 - **Flyway over `ddl-auto`.** Schema is code-reviewed SQL. Hibernate runs with `validate` and fails fast on drift. The saga columns arrived as `V2`, which is how schemas evolve in practice.
 - **Deterministic failures.** Every failure path is reproducible from the request. No random inventory misses.
 - **Avro with a registry, not JSON.** JSON was fine for a demo and is easier to eyeball. Avro makes the contract explicit, compact, and enforced by something outside the codebase: the registry rejects an incompatible change before any consumer sees it. That trade is documented in the serialization section above.
+- **Kafka Streams for read models, not another consumer with a database.** The two aggregations need no durability beyond what the changelog topics give and no query beyond key lookups and window scans. A state store answers that with less moving parts than a fifth Postgres database. If the questions grew into ad hoc SQL, the right move is a sink connector into an analytics database, not a bigger topology.
 - **Testcontainers, not embedded Kafka or H2.** Tests run against the same Kafka, Postgres and Schema Registry the services run against. CI does the same on GitHub Actions.
 
 ## Tests
 
-34 tests across five modules, all in `mvn verify`.
+37 tests across six modules, all in `mvn verify`.
 
 | Level | Where | What |
 |---|---|---|
@@ -238,12 +266,14 @@ Dead-letter records keep the original key and bytes plus headers `kafka_dlt-orig
 | Integration | payment-service | success, failure, redelivery; refund after success, no refund after failure; poison to DLT with original bytes; transient failure retried three times then processed exactly once |
 | Integration | inventory-service | reservation, shortfall leaves other lines untouched, unknown sku, redelivery decrements once |
 | Integration | notification-service | timeline lines via `OutputCaptureExtension`; dead letter WARN line |
+| Topology (`TopologyTestDriver`) | order-analytics | window counts by event time, revenue only for confirmed orders |
+| Integration | order-analytics | real Streams app on Testcontainers Kafka answers both endpoints |
 
 Kafka assertions drain a topic for a fixed window and filter by key, so tests can assert exactly one event and also assert absence.
 
 ## Out of scope, on purpose
 
-Authentication, a UI, real payment or inventory providers, multi-broker deployment. Each would be a service concern layered on top; none changes the messaging design shown here. Landing next: a Kafka Streams analytics module, Kubernetes manifests. Exactly-once with chained Kafka and database transactions was considered and dropped: the outbox already closes the dual-write gap for the saga owner, and shipping both would be two answers to one question.
+Authentication, a UI, real payment or inventory providers, multi-broker deployment. Each would be a service concern layered on top; none changes the messaging design shown here. Landing next: Kubernetes manifests. Exactly-once with chained Kafka and database transactions was considered and dropped: the outbox already closes the dual-write gap for the saga owner, and shipping both would be two answers to one question.
 
 ## License
 
