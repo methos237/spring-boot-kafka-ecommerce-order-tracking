@@ -36,6 +36,8 @@ jobs:
           path: '**/target/surefire-reports/TEST-*.xml'
           reporter: java-junit
           fail-on-error: true
+          # v3 defaults to a job summary on the run page; a check run shows up on the PR checks list
+          use-actions-summary: false
 
   manifests:
     runs-on: ubuntu-latest
