@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: schema-registry
+spec:
+  selector:
+    app: schema-registry
+  ports:
+    - port: 8081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schema-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: schema-registry
+  template:
+    metadata:
+      labels:
+        app: schema-registry
+    spec:
+      # Kubernetes injects <SERVICE>_PORT=tcp://... for every Service in the namespace; Confluent images
+      # read <PREFIX>_* variables as configuration and choke on it. Nobody here needs service links.
+      enableServiceLinks: false
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:1.37
+          command: ["sh", "-c", "until nc -z kafka 9092; do sleep 2; done"]
+      containers:
+        - name: schema-registry
+          image: confluentinc/cp-schema-registry:8.3.1
+          ports:
+            - containerPort: 8081
+          env:
+            - { name: SCHEMA_REGISTRY_HOST_NAME, value: schema-registry }
+            - { name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS, value: kafka:9092 }
+            - { name: SCHEMA_REGISTRY_LISTENERS, value: http://0.0.0.0:8081 }
+            - { name: SCHEMA_REGISTRY_HEAP_OPTS, value: -Xmx256m }
+          readinessProbe:
+            httpGet:
+              path: /subjects
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 384Mi }
+            limits: { memory: 512Mi }

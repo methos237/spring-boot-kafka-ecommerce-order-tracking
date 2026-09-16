@@ -68,7 +68,7 @@ Every record is keyed by `orderId`, so all events for one order land on one part
 
 ## Stack
 
-Java 25 · Spring Boot 4.1 · Spring for Apache Kafka 4.1 · Apache Kafka 4 (KRaft) · Kafka Streams · Avro 1.12 + Confluent Schema Registry · PostgreSQL 16 · Flyway · Micrometer + Prometheus · Testcontainers 2 · Maven · GitHub Actions
+Java 25 · Spring Boot 4.1 · Spring for Apache Kafka 4.1 · Apache Kafka 4 (KRaft) · Kafka Streams · Avro 1.12 + Confluent Schema Registry · PostgreSQL 16 · Flyway · Micrometer + Prometheus · Testcontainers 2 · Maven · GitHub Actions · Kubernetes (Kustomize, kind)
 
 Prerequisites: JDK 25, Maven 3.9+, Docker with Compose v2.
 
@@ -240,6 +240,23 @@ Dead-letter records keep the original key and bytes plus headers `kafka_dlt-orig
 - **Metrics.** Actuator exposes `health`, `info`, `metrics` and `prometheus` on every service. Micrometer's Kafka binder publishes client metrics including consumer lag (`kafka_consumer_fetch_manager_records_lag_max`).
 - **Lag at a glance.** `scripts/status.sh` prints per-partition lag for every consumer group from the broker's point of view.
 
+## Kubernetes
+
+`k8s/base` is a Kustomize base that runs the whole system in one namespace: Kafka (single-node KRaft StatefulSet), Schema Registry, Postgres (StatefulSet with the init SQL as a ConfigMap and credentials in a Secret), and one Deployment plus Service per application. Applications are configured through one shared ConfigMap (`SPRING_KAFKA_BOOTSTRAP_SERVERS`, `SPRING_KAFKA_PROPERTIES_SCHEMA_REGISTRY_URL`, JVM flags) plus per-service datasource env, using Spring Boot's relaxed binding so no image is rebuilt for a config change.
+
+Images come from Paketo buildpacks (`mvn spring-boot:build-image`), no Dockerfiles. Readiness and liveness probes hit Spring Boot's Kubernetes health groups (`/actuator/health/readiness`, `/liveness`), which Boot enables automatically when it detects it is running in a pod. An init container waits for Kafka, the registry and Postgres so services do not crash-loop through Flyway on a cold cluster.
+
+Try it on a laptop with [kind](https://kind.sigs.k8s.io/):
+
+```bash
+scripts/kind-up.sh             # build images, create cluster, load images, apply, wait, run load.sh through a port-forward
+kind delete cluster --name order-tracking
+```
+
+The manifests are validated on every pull request: the CI `manifests` job renders `kubectl kustomize k8s/base` and runs it through `kubeconform -strict`, so a typo in a probe path or a wrong field name fails the build instead of the first deploy.
+
+**What is deliberately single-replica and what would change.** One Kafka broker, one registry, one Postgres, one of each application. The application manifests are what a real cluster keeps; the infrastructure ones are stand-ins. Production swaps the Kafka StatefulSet for Strimzi or a managed cluster (replication factor 3, TLS, ACLs), Postgres for a managed database with real credentials from an external secret store, and adds a `HorizontalPodAutoscaler` for the consumers. Scaling a consumer past one replica works as is: partitions rebalance across pods. Scaling `order-analytics` past one needs query routing to the instance that owns a key; that is noted in the stream processing section.
+
 ## Design decisions
 
 - **Key by `orderId`.** Per-order ordering is what the saga needs; customer-level ordering is not. The key also drives the `X-Order-Id` header and the MDC.
@@ -273,7 +290,7 @@ Kafka assertions drain a topic for a fixed window and filter by key, so tests ca
 
 ## Out of scope, on purpose
 
-Authentication, a UI, real payment or inventory providers, multi-broker deployment. Each would be a service concern layered on top; none changes the messaging design shown here. Landing next: Kubernetes manifests. Exactly-once with chained Kafka and database transactions was considered and dropped: the outbox already closes the dual-write gap for the saga owner, and shipping both would be two answers to one question.
+Authentication, a UI, real payment or inventory providers, multi-broker Kafka, production-grade Kubernetes (Strimzi, external secrets, autoscaling). Each would be a service concern layered on top; none changes the messaging design shown here. All planned stretch items have landed. Exactly-once with chained Kafka and database transactions was considered and dropped: the outbox already closes the dual-write gap for the saga owner, and shipping both would be two answers to one question.
 
 ## License
 

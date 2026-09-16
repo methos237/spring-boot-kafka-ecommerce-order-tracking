@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: order-tracking
+resources:
+  - namespace.yaml
+  - kafka.yaml
+  - schema-registry.yaml
+  - postgres.yaml
+  - config.yaml
+  - order-service.yaml
+  - payment-service.yaml
+  - inventory-service.yaml
+  - notification-service.yaml
+  - order-analytics.yaml
