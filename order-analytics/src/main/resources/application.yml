@@ -1,0 +1,30 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: order-analytics
+  kafka:
+    bootstrap-servers: localhost:9092
+    properties:
+      schema.registry.url: http://localhost:8085
+    streams:
+      application-id: order-analytics
+      properties:
+        commit.interval.ms: 1000
+        # a poison record costs one skipped record, not the stream thread
+        default.deserialization.exception.handler: org.apache.kafka.streams.errors.LogAndContinueExceptionHandler
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  pattern:
+    correlation: "[order=%X{orderId:-}] "
+  level:
+    # On first start the admin client logs ERROR "unknown topic" for the changelog topics Streams is
+    # itself about to create; dozens of lines in two seconds, all benign. Nothing else logs there.
+    org.apache.kafka.clients.admin.internals.PartitionLeaderStrategy: "OFF"

@@ -22,6 +22,7 @@
     <module>payment-service</module>
     <module>inventory-service</module>
     <module>notification-service</module>
+    <module>order-analytics</module>
   </modules>
 
   <properties>
@@ -42,6 +43,11 @@
       <dependency>
         <groupId>io.confluent</groupId>
         <artifactId>kafka-avro-serializer</artifactId>
+        <version>${confluent.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.confluent</groupId>
+        <artifactId>kafka-streams-avro-serde</artifactId>
         <version>${confluent.version}</version>
       </dependency>
     </dependencies>
