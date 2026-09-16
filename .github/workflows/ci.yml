@@ -21,3 +21,14 @@ jobs:
           java-version: '25'
           cache: maven
       - run: mvn -B -q verify
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+      - name: Render and validate
+        run: kubectl kustomize k8s/base | kubeconform -strict -summary
