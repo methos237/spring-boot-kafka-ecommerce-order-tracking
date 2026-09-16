@@ -30,7 +30,7 @@ jobs:
       - run: mvn -B -q verify
       - name: Publish test results
         if: always()
-        uses: dorny/test-reporter@v2
+        uses: dorny/test-reporter@v3
         with:
           name: Tests
           path: '**/target/surefire-reports/TEST-*.xml'
