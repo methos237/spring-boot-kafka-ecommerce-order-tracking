@@ -10,10 +10,10 @@
   </parent>
 
   <groupId>com.jamespolk.ordertracking</groupId>
-  <artifactId>order-tracking</artifactId>
+  <artifactId>waybill</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
-  <name>order-tracking</name>
+  <name>waybill</name>
   <description>Event-driven e-commerce order tracking with Spring Boot and Apache Kafka</description>
 
   <modules>
