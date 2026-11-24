@@ -1,6 +1,6 @@
-# Order Tracking
+# Waybill
 
-[![CI](https://github.com/methos237/spring-boot-kafka-ecommerce-order-tracking/actions/workflows/ci.yml/badge.svg)](https://github.com/methos237/spring-boot-kafka-ecommerce-order-tracking/actions/workflows/ci.yml)
+[![CI](https://github.com/methos237/waybill/actions/workflows/ci.yml/badge.svg)](https://github.com/methos237/waybill/actions/workflows/ci.yml)
 
 Event-driven e-commerce order tracking built with Spring Boot 4 and Apache Kafka.
 
