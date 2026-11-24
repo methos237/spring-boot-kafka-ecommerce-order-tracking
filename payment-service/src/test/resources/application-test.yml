@@ -9,4 +9,4 @@ logging:
 spring:
   kafka:
     properties:
-      schema.registry.url: mock://order-tracking
+      schema.registry.url: mock://waybill
