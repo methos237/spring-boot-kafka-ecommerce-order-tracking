@@ -31,7 +31,7 @@ spec:
           command: ["sh", "-c", "until nc -z kafka 9092 && nc -z schema-registry 8081; do sleep 2; done"]
       containers:
         - name: notification-service
-          image: order-tracking/notification-service:0.1.0-SNAPSHOT
+          image: waybill/notification-service:0.1.0-SNAPSHOT
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8083

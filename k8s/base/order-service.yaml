@@ -31,7 +31,7 @@ spec:
           command: ["sh", "-c", "until nc -z kafka 9092 && nc -z schema-registry 8081 && nc -z postgres 5432; do sleep 2; done"]
       containers:
         - name: order-service
-          image: order-tracking/order-service:0.1.0-SNAPSHOT
+          image: waybill/order-service:0.1.0-SNAPSHOT
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

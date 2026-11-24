@@ -250,7 +250,7 @@ Try it on a laptop with [kind](https://kind.sigs.k8s.io/):
 
 ```bash
 scripts/kind-up.sh             # build images, create cluster, load images, apply, wait, run load.sh through a port-forward
-kind delete cluster --name order-tracking
+kind delete cluster --name waybill
 ```
 
 The manifests are validated on every pull request: the CI `manifests` job renders `kubectl kustomize k8s/base` and runs it through `kubeconform -strict`, so a typo in a probe path or a wrong field name fails the build instead of the first deploy.

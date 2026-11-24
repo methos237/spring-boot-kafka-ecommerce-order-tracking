@@ -68,7 +68,7 @@
         <artifactId>spring-boot-maven-plugin</artifactId>
         <configuration>
           <image>
-            <name>order-tracking/${project.artifactId}:${project.version}</name>
+            <name>waybill/${project.artifactId}:${project.version}</name>
           </image>
         </configuration>
       </plugin>

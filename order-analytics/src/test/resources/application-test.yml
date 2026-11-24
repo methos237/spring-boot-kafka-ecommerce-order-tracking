@@ -8,7 +8,7 @@ logging:
 spring:
   kafka:
     properties:
-      schema.registry.url: mock://order-tracking
+      schema.registry.url: mock://waybill
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: com.jamespolk.ordertracking.events.kafka.EventSerializer

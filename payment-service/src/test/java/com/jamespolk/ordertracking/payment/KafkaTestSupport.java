@@ -25,7 +25,7 @@ final class KafkaTestSupport {
     static List<ConsumerRecord<String, Object>> drain(String bootstrapServers, String topic, Duration window) {
         Map<String, Object> props = new HashMap<>(base(bootstrapServers));
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, KafkaAvroDeserializer.class);
-        props.put(KafkaAvroDeserializerConfig.SCHEMA_REGISTRY_URL_CONFIG, "mock://order-tracking");
+        props.put(KafkaAvroDeserializerConfig.SCHEMA_REGISTRY_URL_CONFIG, "mock://waybill");
         props.put(KafkaAvroDeserializerConfig.SPECIFIC_AVRO_READER_CONFIG, true);
         props.put(KafkaAvroDeserializerConfig.AVRO_USE_LOGICAL_TYPE_CONVERTERS_CONFIG, true);
         return poll(props, topic, window);
